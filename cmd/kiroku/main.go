@@ -90,10 +90,17 @@ Options:
 
 	port := fs.Int("port", 4319, "listen port")
 	noOpen := fs.Bool("no-open", false, "skip opening the browser")
+	var mapFlags multiFlag
+	fs.Var(&mapFlags, "map", "CWD mapping rule PATTERN=CANONICAL (repeatable)")
 	if err := fs.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
 			return nil
 		}
+		return err
+	}
+
+	cwdMapper, err := store.ParseCWDMapFlags(mapFlags)
+	if err != nil {
 		return err
 	}
 
@@ -114,6 +121,8 @@ Options:
 		return err
 	}
 	defer reader.Close()
+
+	reader.SetCWDMapper(cwdMapper)
 
 	var mu sync.Mutex
 	var indexing atomic.Bool
@@ -399,6 +408,14 @@ Usage:
 
 	fmt.Fprintf(stdout, "resuming session %s in %s\n", sessionID, cwd)
 	return cmd.Run()
+}
+
+type multiFlag []string
+
+func (f *multiFlag) String() string { return strings.Join(*f, ", ") }
+func (f *multiFlag) Set(value string) error {
+	*f = append(*f, value)
+	return nil
 }
 
 func openBrowser(ctx context.Context, address string) error {

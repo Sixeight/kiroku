@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -18,7 +19,12 @@ import (
 )
 
 type SQLiteStore struct {
-	db *sql.DB
+	db     *sql.DB
+	mapper *CWDMapper
+}
+
+func (s *SQLiteStore) SetCWDMapper(m *CWDMapper) {
+	s.mapper = m
 }
 
 type SourceInfoParams struct {
@@ -401,8 +407,9 @@ func (s *SQLiteStore) ListSessions(ctx context.Context, params ListSessionsParam
 		args = append(args, like, like, like)
 	}
 	if params.CWD != "" {
-		filters = append(filters, "cwd = ?")
-		args = append(args, params.CWD)
+		clause, cwdArgs := s.cwdFilterClause(ctx, params.CWD)
+		filters = append(filters, clause)
+		args = append(args, cwdArgs...)
 	}
 	if params.Branch != "" {
 		filters = append(filters, "git_branch = ?")
@@ -486,6 +493,12 @@ func (s *SQLiteStore) ListSessions(ctx context.Context, params ListSessionsParam
 
 	if err := s.attachPRsToSessions(ctx, sessions); err != nil {
 		return nil, "", err
+	}
+
+	if s.mapper != nil {
+		for i := range sessions {
+			sessions[i].CWD = s.mapper.Map(sessions[i].CWD)
+		}
 	}
 
 	return sessions, nextCursor, nil
@@ -744,25 +757,42 @@ func (s *SQLiteStore) topProjects(ctx context.Context, limit int) ([]ProjectSumm
 		   FROM sessions
 		  WHERE cwd <> ''
 		  GROUP BY cwd
-		  ORDER BY session_count DESC, cwd ASC
-		  LIMIT ?`,
-		limit,
+		  ORDER BY session_count DESC, cwd ASC`,
 	)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 
-	var result []ProjectSummary
+	merged := map[string]int{}
 	for rows.Next() {
-		var item ProjectSummary
-		if err := rows.Scan(&item.Name, &item.SessionCount); err != nil {
+		var cwd string
+		var count int
+		if err := rows.Scan(&cwd, &count); err != nil {
 			return nil, err
 		}
-		result = append(result, item)
+		canonical := s.mapper.Map(cwd)
+		merged[canonical] += count
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
 	}
 
-	return result, rows.Err()
+	result := make([]ProjectSummary, 0, len(merged))
+	for name, count := range merged {
+		result = append(result, ProjectSummary{Name: name, SessionCount: count})
+	}
+	sort.Slice(result, func(i, j int) bool {
+		if result[i].SessionCount != result[j].SessionCount {
+			return result[i].SessionCount > result[j].SessionCount
+		}
+		return result[i].Name < result[j].Name
+	})
+	if len(result) > limit {
+		result = result[:limit]
+	}
+
+	return result, nil
 }
 
 func (s *SQLiteStore) topBranches(ctx context.Context, limit int) ([]BranchSummary, error) {
@@ -853,6 +883,8 @@ type conversationRecord struct {
 	} `json:"message"`
 }
 
+var skillCommandNameRe = regexp.MustCompile(`<command-name>([^<]+)</command-name>`)
+
 type conversationRawBlock struct {
 	Type     string          `json:"type"`
 	Text     string          `json:"text"`
@@ -916,17 +948,19 @@ func (s *SQLiteStore) ReadSessionMessages(ctx context.Context, sessionID string,
 		}
 
 		if record.Type == "system" && record.Subtype == "local_command" && record.SystemContent != "" {
-			if idx >= offset {
-				msg := ConversationMessage{
-					Role:      "system",
-					Timestamp: record.Timestamp,
-					Blocks: []ConversationBlock{{
-						Type: "skill",
-						Text: record.SystemContent,
-					}},
-				}
-				if searchQuery == "" || messageMatchesQuery(msg, searchQuery) {
-					messages = append(messages, msg)
+			if m := skillCommandNameRe.FindStringSubmatch(record.SystemContent); len(m) > 1 {
+				if idx >= offset {
+					msg := ConversationMessage{
+						Role:      "system",
+						Timestamp: record.Timestamp,
+						Blocks: []ConversationBlock{{
+							Type: "skill",
+							Text: m[1],
+						}},
+					}
+					if searchQuery == "" || messageMatchesQuery(msg, searchQuery) {
+						messages = append(messages, msg)
+					}
 				}
 			}
 		}
@@ -1065,28 +1099,33 @@ func extractToolResultContent(raw json.RawMessage) string {
 func (s *SQLiteStore) GetProjectStats(ctx context.Context, cwd string) (ProjectStats, error) {
 	stats := ProjectStats{CWD: cwd}
 
+	cwdFilter, cwdArgs := s.cwdFilterClause(ctx, cwd)
+
+	args := append([]any{}, cwdArgs...)
 	err := s.db.QueryRowContext(ctx,
 		`SELECT COUNT(*), COALESCE(SUM(message_count), 0), COALESCE(SUM(tool_call_count), 0)
-		 FROM sessions WHERE cwd = ?`, cwd,
+		 FROM sessions WHERE `+cwdFilter, args...,
 	).Scan(&stats.TotalSessions, &stats.TotalMessages, &stats.TotalToolCalls)
 	if err != nil {
 		return ProjectStats{}, err
 	}
 
+	args = append([]any{}, cwdArgs...)
 	err = s.db.QueryRowContext(ctx,
 		`SELECT COALESCE(SUM(sm.input_tokens), 0), COALESCE(SUM(sm.output_tokens), 0),
 		        COALESCE(SUM(sm.cache_read_tokens), 0), COALESCE(SUM(sm.cache_write_tokens), 0)
 		 FROM session_models sm JOIN sessions s ON sm.session_id = s.session_id
-		 WHERE s.cwd = ?`, cwd,
+		 WHERE s.`+cwdFilter, args...,
 	).Scan(&stats.InputTokens, &stats.OutputTokens, &stats.CacheReadTokens, &stats.CacheWriteTokens)
 	if err != nil {
 		return ProjectStats{}, err
 	}
 
+	args = append([]any{}, cwdArgs...)
 	toolRows, err := s.db.QueryContext(ctx,
 		`SELECT st.tool_name, SUM(st.count) AS total
 		 FROM session_tools st JOIN sessions s ON st.session_id = s.session_id
-		 WHERE s.cwd = ? GROUP BY st.tool_name ORDER BY total DESC LIMIT 8`, cwd)
+		 WHERE s.`+cwdFilter+` GROUP BY st.tool_name ORDER BY total DESC LIMIT 8`, args...)
 	if err != nil {
 		return ProjectStats{}, err
 	}
@@ -1102,11 +1141,12 @@ func (s *SQLiteStore) GetProjectStats(ctx context.Context, cwd string) (ProjectS
 		return ProjectStats{}, err
 	}
 
+	args = append([]any{}, cwdArgs...)
 	modelRows, err := s.db.QueryContext(ctx,
 		`SELECT sm.model, SUM(sm.input_tokens), SUM(sm.output_tokens),
 		        SUM(sm.cache_read_tokens), SUM(sm.cache_write_tokens), COUNT(DISTINCT sm.session_id)
 		 FROM session_models sm JOIN sessions s ON sm.session_id = s.session_id
-		 WHERE s.cwd = ? GROUP BY sm.model ORDER BY SUM(sm.output_tokens) DESC LIMIT 5`, cwd)
+		 WHERE s.`+cwdFilter+` GROUP BY sm.model ORDER BY SUM(sm.output_tokens) DESC LIMIT 5`, args...)
 	if err != nil {
 		return ProjectStats{}, err
 	}
@@ -1122,9 +1162,10 @@ func (s *SQLiteStore) GetProjectStats(ctx context.Context, cwd string) (ProjectS
 		return ProjectStats{}, err
 	}
 
+	args = append([]any{}, cwdArgs...)
 	branchRows, err := s.db.QueryContext(ctx,
 		`SELECT git_branch, COUNT(*) FROM sessions
-		 WHERE cwd = ? AND git_branch <> '' GROUP BY git_branch ORDER BY COUNT(*) DESC`, cwd)
+		 WHERE `+cwdFilter+` AND git_branch <> '' GROUP BY git_branch ORDER BY COUNT(*) DESC`, args...)
 	if err != nil {
 		return ProjectStats{}, err
 	}
@@ -1141,6 +1182,52 @@ func (s *SQLiteStore) GetProjectStats(ctx context.Context, cwd string) (ProjectS
 	}
 
 	return stats, nil
+}
+
+// cwdFilterClause returns a SQL WHERE clause and args that match sessions
+// belonging to the given canonical CWD. When a CWDMapper is set, this
+// expands the canonical CWD to include all raw CWDs that map to it.
+func (s *SQLiteStore) cwdFilterClause(ctx context.Context, canonical string) (string, []any) {
+	if s.mapper == nil {
+		return "cwd = ?", []any{canonical}
+	}
+
+	cwds := s.expandCWD(ctx, canonical)
+	if len(cwds) == 0 {
+		return "cwd = ?", []any{canonical}
+	}
+
+	placeholders := make([]string, len(cwds))
+	args := make([]any, len(cwds))
+	for i, c := range cwds {
+		placeholders[i] = "?"
+		args[i] = c
+	}
+	return "cwd IN (" + strings.Join(placeholders, ",") + ")", args
+}
+
+// expandCWD returns all distinct CWDs in the DB that map to the given canonical CWD.
+func (s *SQLiteStore) expandCWD(ctx context.Context, canonical string) []string {
+	rows, err := s.db.QueryContext(ctx, `SELECT DISTINCT cwd FROM sessions WHERE cwd <> ''`)
+	if err != nil {
+		return []string{canonical}
+	}
+	defer rows.Close()
+
+	var result []string
+	for rows.Next() {
+		var cwd string
+		if err := rows.Scan(&cwd); err != nil {
+			continue
+		}
+		if s.mapper.Map(cwd) == canonical {
+			result = append(result, cwd)
+		}
+	}
+	if len(result) == 0 {
+		return []string{canonical}
+	}
+	return result
 }
 
 func encodeCursor(offset int) string {

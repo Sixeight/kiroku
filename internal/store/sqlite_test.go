@@ -951,6 +951,38 @@ func TestSQLiteStoreGetProjectStatsEmptyCWD(t *testing.T) {
 	}
 }
 
+func TestSQLiteStoreSkillBlockContainsOnlyCommandName(t *testing.T) {
+	reader := setupStore(t, map[string]string{
+		"skill.jsonl": sessionWithSkillLog(),
+	})
+
+	messages, _, err := reader.ReadSessionMessages(context.Background(), "session-skill", 100, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var skillBlock *store.ConversationBlock
+	for _, msg := range messages {
+		if msg.Role != "system" {
+			continue
+		}
+		for i, b := range msg.Blocks {
+			if b.Type == "skill" {
+				skillBlock = &msg.Blocks[i]
+				break
+			}
+		}
+	}
+
+	if skillBlock == nil {
+		t.Fatal("expected a skill block in messages")
+	}
+
+	if got, want := skillBlock.Text, "/commit"; got != want {
+		t.Fatalf("skill block text = %q, want %q (should be command name only, not expanded content)", got, want)
+	}
+}
+
 func writeLog(t *testing.T, path, payload string) {
 	t.Helper()
 
@@ -978,6 +1010,112 @@ func sessionTwoLog() string {
 	return `{"sessionId":"session-2","cwd":"/tmp/project-search","gitBranch":"feature/search","type":"user","message":{"role":"user","content":[{"type":"text","text":"search bug"}]},"timestamp":"2026-03-15T11:00:00Z"}
 {"sessionId":"session-2","cwd":"/tmp/project-search","gitBranch":"feature/search","type":"assistant","message":{"model":"claude-sonnet-4-6","role":"assistant","usage":{"input_tokens":10,"output_tokens":5,"cache_read_input_tokens":3,"cache_creation_input_tokens":1},"content":[{"type":"tool_use","name":"Read","id":"tool-2","input":{"file_path":"a.go"}},{"type":"text","text":"search fixed"}]},"timestamp":"2026-03-15T11:00:01Z"}
 `
+}
+
+func sessionWithSkillLog() string {
+	return `{"sessionId":"session-skill","cwd":"/tmp/project","gitBranch":"main","type":"user","message":{"role":"user","content":[{"type":"text","text":"hello"}]},"timestamp":"2026-03-15T10:00:00Z"}
+{"sessionId":"session-skill","cwd":"/tmp/project","gitBranch":"main","type":"assistant","message":{"model":"claude-opus-4-6","role":"assistant","usage":{"input_tokens":5,"output_tokens":3,"cache_read_input_tokens":0,"cache_creation_input_tokens":0},"content":[{"type":"text","text":"ok"}]},"timestamp":"2026-03-15T10:00:01Z"}
+{"type":"system","subtype":"local_command","sessionId":"session-skill","content":"<command-name>/commit</command-name>\n<command-message>commit</command-message>\n<command-args></command-args>This is the expanded skill prompt that should NOT be included...","timestamp":"2026-03-15T10:00:02Z"}
+`
+}
+
+func worktreeSessionLog() string {
+	return `{"sessionId":"session-wt","cwd":"/tmp/project-search-worktrees/feature-a","gitBranch":"feature-a","type":"user","message":{"role":"user","content":[{"type":"text","text":"worktree work"}]},"timestamp":"2026-03-15T12:00:00Z"}
+{"sessionId":"session-wt","cwd":"/tmp/project-search-worktrees/feature-a","gitBranch":"feature-a","type":"assistant","message":{"model":"claude-opus-4-6","role":"assistant","usage":{"input_tokens":5,"output_tokens":3,"cache_read_input_tokens":0,"cache_creation_input_tokens":0},"content":[{"type":"text","text":"done in worktree"}]},"timestamp":"2026-03-15T12:00:01Z"}
+`
+}
+
+func TestSQLiteStoreTopProjectsMergesWorktrees(t *testing.T) {
+	reader := setupStore(t, map[string]string{
+		"two.jsonl":      sessionTwoLog(),
+		"three.jsonl":    sessionThreeLog(),
+		"worktree.jsonl": worktreeSessionLog(),
+	})
+
+	mapper, err := store.ParseCWDMapFlags([]string{
+		"/tmp/project-search-worktrees/*=/tmp/project-search",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	reader.SetCWDMapper(mapper)
+
+	summary, err := reader.LoadSummary(context.Background(), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// session-2, session-3, and session-wt should all map to /tmp/project-search
+	if len(summary.TopProjects) != 1 {
+		t.Fatalf("expected 1 merged project, got %d: %+v", len(summary.TopProjects), summary.TopProjects)
+	}
+	if got, want := summary.TopProjects[0].Name, "/tmp/project-search"; got != want {
+		t.Fatalf("project name = %q, want %q", got, want)
+	}
+	if got, want := summary.TopProjects[0].SessionCount, 3; got != want {
+		t.Fatalf("session count = %d, want %d", got, want)
+	}
+}
+
+func TestSQLiteStoreGetProjectStatsMergesWorktrees(t *testing.T) {
+	reader := setupStore(t, map[string]string{
+		"two.jsonl":      sessionTwoLog(),
+		"worktree.jsonl": worktreeSessionLog(),
+	})
+
+	mapper, err := store.ParseCWDMapFlags([]string{
+		"/tmp/project-search-worktrees/*=/tmp/project-search",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	reader.SetCWDMapper(mapper)
+
+	stats, err := reader.GetProjectStats(context.Background(), "/tmp/project-search")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// session-2 + session-wt = 2 sessions
+	if got, want := stats.TotalSessions, 2; got != want {
+		t.Fatalf("total sessions = %d, want %d", got, want)
+	}
+}
+
+func TestSQLiteStoreListSessionsCWDFilterIncludesWorktrees(t *testing.T) {
+	reader := setupStore(t, map[string]string{
+		"one.jsonl":      sessionOneLog(),
+		"two.jsonl":      sessionTwoLog(),
+		"worktree.jsonl": worktreeSessionLog(),
+	})
+
+	mapper, err := store.ParseCWDMapFlags([]string{
+		"/tmp/project-search-worktrees/*=/tmp/project-search",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	reader.SetCWDMapper(mapper)
+
+	sessions, _, err := reader.ListSessions(context.Background(), store.ListSessionsParams{
+		Limit: 10,
+		CWD:   "/tmp/project-search",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// session-2 (cwd=/tmp/project-search) + session-wt (worktree mapped) = 2
+	if got, want := len(sessions), 2; got != want {
+		t.Fatalf("sessions len = %d, want %d", got, want)
+	}
+
+	// All sessions should show the canonical CWD
+	for _, s := range sessions {
+		if got, want := s.CWD, "/tmp/project-search"; got != want {
+			t.Errorf("session %s CWD = %q, want %q", s.SessionID, got, want)
+		}
+	}
 }
 
 func sessionThreeLog() string {
