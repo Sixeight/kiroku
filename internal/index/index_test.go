@@ -724,6 +724,57 @@ func TestReindexCleanPreviewSkipsSystemMessages(t *testing.T) {
 	}
 }
 
+// TestReindexCountsLocalCommandSkills verifies that local_command system
+// records (manually triggered skills like /commit) are counted in session_tools.
+func TestReindexCountsLocalCommandSkills(t *testing.T) {
+	root := t.TempDir()
+	dbPath := filepath.Join(root, "index.sqlite")
+	projectRoot := filepath.Join(root, "projects")
+
+	if err := os.MkdirAll(projectRoot, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	payload := validSessionLog() +
+		`{"type":"system","subtype":"local_command","sessionId":"session-1","content":"<command-name>/commit</command-name>\n<command-message>commit</command-message>\n<command-args></command-args>Expanded skill content here...","timestamp":"2026-03-15T10:00:05Z"}` + "\n"
+
+	logPath := filepath.Join(projectRoot, "session.jsonl")
+	if err := os.WriteFile(logPath, []byte(payload), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	idx, err := index.Open(dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer idx.Close()
+
+	if _, err := idx.Reindex(context.Background(), []string{projectRoot}, false); err != nil {
+		t.Fatal(err)
+	}
+
+	if got, want := toolCount(t, dbPath, "session-1", "/commit"), 1; got != want {
+		t.Fatalf("/commit tool count = %d, want %d", got, want)
+	}
+
+	// ToolCallCount should NOT be incremented by local_command records.
+	db := openDB(t, dbPath)
+	defer db.Close()
+
+	var toolCallCount int
+	if err := db.QueryRow(
+		`SELECT tool_call_count FROM sessions WHERE session_id = ?`,
+		"session-1",
+	).Scan(&toolCallCount); err != nil {
+		t.Fatal(err)
+	}
+
+	// validSessionLog has 1 Bash tool_use; local_command should not add to tool_call_count.
+	if got, want := toolCallCount, 1; got != want {
+		t.Fatalf("tool_call_count = %d, want %d (local_command should not increment)", got, want)
+	}
+}
+
 // TestReindexContextCancellation verifies that passing a cancelled context
 // to Reindex returns ctx.Err() promptly without processing all files.
 func TestReindexContextCancellation(t *testing.T) {

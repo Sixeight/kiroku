@@ -69,17 +69,19 @@ type modelAggregate struct {
 }
 
 type transcriptRecord struct {
-	Type         string          `json:"type"`
-	SessionID    string          `json:"sessionId"`
-	CWD          string          `json:"cwd"`
-	GitBranch    string          `json:"gitBranch"`
-	IsSidechain  bool            `json:"isSidechain"`
-	AgentID      string          `json:"agentId"`
-	Timestamp    string          `json:"timestamp"`
-	Message      *messagePayload `json:"message"`
-	PRNumber     int             `json:"prNumber"`
-	PRUrl        string          `json:"prUrl"`
-	PRRepository string          `json:"prRepository"`
+	Type          string          `json:"type"`
+	Subtype       string          `json:"subtype"`
+	SessionID     string          `json:"sessionId"`
+	CWD           string          `json:"cwd"`
+	GitBranch     string          `json:"gitBranch"`
+	IsSidechain   bool            `json:"isSidechain"`
+	AgentID       string          `json:"agentId"`
+	Timestamp     string          `json:"timestamp"`
+	SystemContent string          `json:"content"`
+	Message       *messagePayload `json:"message"`
+	PRNumber      int             `json:"prNumber"`
+	PRUrl         string          `json:"prUrl"`
+	PRRepository  string          `json:"prRepository"`
 }
 
 type messagePayload struct {
@@ -364,6 +366,15 @@ func aggregateRecord(sessions map[string]*sessionAggregate, state fileState, rec
 				PRUrl:        record.PRUrl,
 				PRRepository: record.PRRepository,
 			})
+		}
+		return
+	}
+
+	if record.Type == "system" && record.Subtype == "local_command" && record.SystemContent != "" {
+		session := getOrCreateSession(sessions, state, record)
+		updateBounds(session, record.Timestamp)
+		if m := commandNameRe.FindStringSubmatch(record.SystemContent); len(m) > 1 {
+			session.ToolCounts[m[1]]++
 		}
 		return
 	}

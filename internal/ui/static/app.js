@@ -805,8 +805,7 @@ function renderSessionMeta(messages) {
           }
         }
         if (b.type === "skill" && b.text) {
-          const m = b.text.match(/<command-name>([^<]+)<\/command-name>/);
-          if (m) skills.add(m[1]);
+          skills.add(b.text);
         }
       }
     }
@@ -893,11 +892,9 @@ function renderConversation(messages) {
             );
           }
           if (b.type === "skill" && b.text) {
-            const m = b.text.match(/<command-name>([^<]+)<\/command-name>/);
-            if (m)
-              parts.push(
-                `<span class="msg-role msg-role-system">Skill</span> <span class="badge badge-skill">${escapeHTML(m[1])}</span>`,
-              );
+            parts.push(
+              `<span class="msg-role msg-role-system">Skill</span> <span class="badge badge-skill">${escapeHTML(b.text)}</span>`,
+            );
           }
         }
         if (!parts.length) return "";
