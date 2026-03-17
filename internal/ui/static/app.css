@@ -806,6 +806,11 @@ h1 {
   color: var(--accent);
 }
 
+.msg-slash-cmd {
+  font-weight: 600;
+  color: var(--accent);
+}
+
 .badge-hook {
   background: var(--accent-soft);
   color: var(--muted);

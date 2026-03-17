@@ -983,6 +983,47 @@ func TestSQLiteStoreSkillBlockContainsOnlyCommandName(t *testing.T) {
 	}
 }
 
+func TestSQLiteStoreUserMessageSkipsExpandedSkillPrompt(t *testing.T) {
+	reader := setupStore(t, map[string]string{
+		"skill.jsonl": sessionWithSkillLog(),
+	})
+
+	messages, _, err := reader.ReadSessionMessages(context.Background(), "session-skill", 100, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// The expanded skill prompt (next user msg after command-name trigger)
+	// should not appear in messages.
+	for _, msg := range messages {
+		for _, b := range msg.Blocks {
+			if b.Type == "text" && strings.Contains(b.Text, "fine-grained logical units") {
+				t.Fatal("expanded skill prompt should not appear in messages")
+			}
+		}
+	}
+
+	// The command-name trigger should reconstruct the original user input.
+	var cmdMsg *store.ConversationMessage
+	for i, msg := range messages {
+		if msg.Role != "user" {
+			continue
+		}
+		for _, b := range msg.Blocks {
+			if b.Type == "text" && strings.HasPrefix(b.Text, "/commit") {
+				cmdMsg = &messages[i]
+				break
+			}
+		}
+	}
+	if cmdMsg == nil {
+		t.Fatal("expected a user message with reconstructed command text")
+	}
+	if got, want := cmdMsg.Blocks[0].Text, "/commit all changes"; got != want {
+		t.Fatalf("reconstructed text = %q, want %q", got, want)
+	}
+}
+
 func writeLog(t *testing.T, path, payload string) {
 	t.Helper()
 
@@ -1013,9 +1054,15 @@ func sessionTwoLog() string {
 }
 
 func sessionWithSkillLog() string {
+	// Real pattern:
+	// 1) user msg with plain string "<command-name>/commit</command-name><command-args>...</command-args>"
+	// 2) next user msg with isMeta:true containing expanded skill prompt
+	// 3) optionally a system local_command record
 	return `{"sessionId":"session-skill","cwd":"/tmp/project","gitBranch":"main","type":"user","message":{"role":"user","content":[{"type":"text","text":"hello"}]},"timestamp":"2026-03-15T10:00:00Z"}
 {"sessionId":"session-skill","cwd":"/tmp/project","gitBranch":"main","type":"assistant","message":{"model":"claude-opus-4-6","role":"assistant","usage":{"input_tokens":5,"output_tokens":3,"cache_read_input_tokens":0,"cache_creation_input_tokens":0},"content":[{"type":"text","text":"ok"}]},"timestamp":"2026-03-15T10:00:01Z"}
-{"type":"system","subtype":"local_command","sessionId":"session-skill","content":"<command-name>/commit</command-name>\n<command-message>commit</command-message>\n<command-args></command-args>This is the expanded skill prompt that should NOT be included...","timestamp":"2026-03-15T10:00:02Z"}
+{"sessionId":"session-skill","cwd":"/tmp/project","gitBranch":"main","type":"user","message":{"role":"user","content":"<command-message>commit</command-message>\n<command-name>/commit</command-name>\n<command-args>all changes</command-args>"},"timestamp":"2026-03-15T10:00:02Z"}
+{"sessionId":"session-skill","cwd":"/tmp/project","gitBranch":"main","isMeta":true,"type":"user","message":{"role":"user","content":[{"type":"text","text":"# Commit in fine-grained logical units\n\nThis is the expanded skill prompt that should NOT be shown..."}]},"timestamp":"2026-03-15T10:00:03Z"}
+{"type":"system","subtype":"local_command","sessionId":"session-skill","content":"<command-name>/commit</command-name>\n<command-message>commit</command-message>\n<command-args></command-args>This is the expanded skill prompt that should NOT be included...","timestamp":"2026-03-15T10:00:04Z"}
 `
 }
 

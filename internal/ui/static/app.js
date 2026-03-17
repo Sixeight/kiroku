@@ -909,9 +909,14 @@ function renderConversation(messages) {
               const raw = b.text || "";
               if (isUser) {
                 const text = cleanUserText(raw);
-                return text
-                  ? `<p class="msg-text">${escapeHTML(text)}</p>`
-                  : "";
+                if (!text) return "";
+                const slashMatch = text.match(/^(\/\S+)(.*)/s);
+                if (slashMatch) {
+                  const cmd = slashMatch[1];
+                  const rest = slashMatch[2];
+                  return `<p class="msg-text"><span class="msg-slash-cmd">${escapeHTML(cmd)}</span>${rest ? escapeHTML(rest) : ""}</p>`;
+                }
+                return `<p class="msg-text">${escapeHTML(text)}</p>`;
               }
               return raw
                 ? `<div class="msg-text">${renderMarkdown(raw)}</div>`

@@ -863,6 +863,7 @@ type conversationRecord struct {
 	Type        string `json:"type"`
 	SessionID   string `json:"sessionId"`
 	IsSidechain bool   `json:"isSidechain"`
+	IsMeta      bool   `json:"isMeta"`
 	Timestamp   string `json:"timestamp"`
 	Subtype     string `json:"subtype"`
 	HookInfos   []struct {
@@ -884,6 +885,7 @@ type conversationRecord struct {
 }
 
 var skillCommandNameRe = regexp.MustCompile(`<command-name>([^<]+)</command-name>`)
+var skillCommandArgsRe = regexp.MustCompile(`<command-args>([^<]+)</command-args>`)
 
 type conversationRawBlock struct {
 	Type     string          `json:"type"`
@@ -966,6 +968,11 @@ func (s *SQLiteStore) ReadSessionMessages(ctx context.Context, sessionID string,
 		}
 
 		if record.SessionID == sessionID && !record.IsSidechain && record.Message != nil {
+			// Skip isMeta user messages (expanded skill prompts).
+			if record.IsMeta {
+				return nil
+			}
+
 			if idx >= offset {
 				msg := ConversationMessage{
 					Role:             record.Message.Role,
@@ -1007,7 +1014,19 @@ func (s *SQLiteStore) ReadSessionMessages(ctx context.Context, sessionID string,
 				} else {
 					var plainText string
 					if json.Unmarshal(record.Message.Content, &plainText) == nil && plainText != "" {
-						msg.Blocks = append(msg.Blocks, ConversationBlock{Type: "text", Text: plainText})
+						if record.Message.Role == "user" {
+							if m := skillCommandNameRe.FindStringSubmatch(plainText); len(m) > 1 {
+								text := m[1]
+								if a := skillCommandArgsRe.FindStringSubmatch(plainText); len(a) > 1 && a[1] != "" {
+									text += " " + a[1]
+								}
+								msg.Blocks = append(msg.Blocks, ConversationBlock{Type: "text", Text: text})
+							} else {
+								msg.Blocks = append(msg.Blocks, ConversationBlock{Type: "text", Text: plainText})
+							}
+						} else {
+							msg.Blocks = append(msg.Blocks, ConversationBlock{Type: "text", Text: plainText})
+						}
 					}
 				}
 
