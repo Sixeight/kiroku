@@ -4,6 +4,8 @@ A web dashboard for browsing Claude Code session history.
 
 Parses JSONL transcript files stored under `~/.config/claude/projects/` and provides a Web UI for viewing session lists, token usage, tool usage statistics, and more.
 
+![kiroku screenshot](screenshot.png)
+
 ## Installation
 
 ```
