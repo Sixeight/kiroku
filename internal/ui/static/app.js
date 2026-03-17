@@ -1147,6 +1147,16 @@ function formatToolInput(tool, input) {
       return `${input.pattern || ""}${input.path ? "  " + input.path : ""}`;
     case "Agent":
       return input.prompt ? input.prompt.slice(0, 200) : "";
+    case "AskUserQuestion": {
+      const qs = input.questions;
+      if (!Array.isArray(qs)) return "";
+      return qs
+        .map((q) => {
+          const opts = (q.options || []).map((o) => o.label).join(" / ");
+          return `${q.question || ""}${opts ? "\n  → " + opts : ""}`;
+        })
+        .join("\n");
+    }
     default: {
       const keys = Object.keys(input);
       if (!keys.length) return "";
