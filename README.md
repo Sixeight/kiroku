@@ -36,13 +36,22 @@ kiroku <command> [options]
 Start the web dashboard and open it in a browser. The index is automatically refreshed every 2 seconds while running.
 
 ```
-kiroku open [--port 4319] [--no-open]
+kiroku open [--port 4319] [--no-open] [--map PATTERN=CANONICAL ...]
 ```
 
 | Option    | Default | Description                  |
 |-----------|---------|------------------------------|
 | `-port`   | `4319`  | Listen port                  |
 | `-no-open`| `false` | Skip opening the browser     |
+| `-map`    |         | CWD mapping rule (repeatable)|
+
+The `-map` flag consolidates worktree sessions under a single canonical project path. This is useful when Claude Code creates worktree sessions that appear as separate projects.
+
+```
+kiroku open --map '/path/to/repo-worktrees/*=/path/to/repo'
+```
+
+The pattern supports `*` as a wildcard suffix. All sessions whose CWD matches the pattern will be grouped under the canonical path in the dashboard.
 
 ### `doctor`
 
