@@ -233,7 +233,7 @@ CREATE TABLE IF NOT EXISTS files(
 CREATE TABLE IF NOT EXISTS session_hooks(
   session_id TEXT,
   hook_event TEXT,
-  command TEXT,
+  command TEXT DEFAULT '',
   count INTEGER,
   PRIMARY KEY(session_id, hook_event, command)
 );
@@ -245,7 +245,49 @@ CREATE VIRTUAL TABLE IF NOT EXISTS session_content_fts USING fts5(
 `
 
 	_, err := i.db.Exec(schema)
-	return err
+	if err != nil {
+		return err
+	}
+
+	return i.migrateSchema()
+}
+
+func (i *Indexer) migrateSchema() error {
+	// Migrate session_hooks: add command column if missing (v0 → v1).
+	var hasCommand bool
+	rows, err := i.db.Query(`PRAGMA table_info(session_hooks)`)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var cid int
+		var name, typ string
+		var notNull, pk int
+		var dflt *string
+		if err := rows.Scan(&cid, &name, &typ, &notNull, &dflt, &pk); err != nil {
+			return err
+		}
+		if name == "command" {
+			hasCommand = true
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+
+	if !hasCommand {
+		_, err := i.db.Exec(`DROP TABLE session_hooks;
+CREATE TABLE session_hooks(
+  session_id TEXT,
+  hook_event TEXT,
+  command TEXT DEFAULT '',
+  count INTEGER,
+  PRIMARY KEY(session_id, hook_event, command)
+);`)
+		return err
+	}
+	return nil
 }
 
 func collectJSONLFiles(roots []string) ([]fileState, error) {
