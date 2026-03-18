@@ -409,13 +409,13 @@ Options:
 	defer reader.Close()
 
 	sessions, _, err := reader.ListSessions(ctx, store.ListSessionsParams{
-		Limit:  *limit,
-		CWD:    cwd,
-		Branch: *branch,
-		From:   *from,
-		To:     *to,
-		Q:      *q,
-		Sort:   *sortBy,
+		Limit:   *limit,
+		CWD:     cwd,
+		Branch:  *branch,
+		From:    *from,
+		To:      *to,
+		Content: *q,
+		Sort:    *sortBy,
 	})
 	if err != nil {
 		return err

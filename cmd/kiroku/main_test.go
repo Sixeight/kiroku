@@ -295,6 +295,37 @@ func TestRunListDefaultFiltersByCurrentDir(t *testing.T) {
 	}
 }
 
+func TestRunListSearchesContent(t *testing.T) {
+	setupCLIEnv(t)
+
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	if err := run(context.Background(), &stdout, &stderr, []string{"reindex"}); err != nil {
+		t.Fatal(err)
+	}
+
+	// "done" is in assistant message content but NOT in the preview ("first prompt")
+	// This verifies -q searches full message content via FTS, not just preview
+	stdout.Reset()
+	stderr.Reset()
+	if err := run(context.Background(), &stdout, &stderr, []string{"list", "-all", "-q", "done"}); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(stdout.String(), "session-1") {
+		t.Fatalf("expected session-1 in output for content query 'done', got: %q", stdout.String())
+	}
+
+	// Search for text that does not exist in any message
+	stdout.Reset()
+	stderr.Reset()
+	if err := run(context.Background(), &stdout, &stderr, []string{"list", "-all", "-q", "nonexistent"}); err != nil {
+		t.Fatal(err)
+	}
+	if strings.TrimSpace(stdout.String()) != "" {
+		t.Fatalf("expected no output for non-matching query, got: %q", stdout.String())
+	}
+}
+
 func TestRunListNoIndexReturnsError(t *testing.T) {
 	setupCLIEnv(t)
 
