@@ -817,7 +817,6 @@ function renderModelRows(items) {
 
 function renderSessionMeta(messages) {
   const skills = new Set();
-  const hooks = new Set();
 
   for (const msg of messages) {
     if (msg.role === "user") {
@@ -830,11 +829,6 @@ function renderSessionMeta(messages) {
     }
     if (msg.role === "system") {
       for (const b of msg.blocks || []) {
-        if (b.type === "hook" && b.text) {
-          for (const cmd of b.text.split("\n")) {
-            if (cmd.trim()) hooks.add(cmd.trim());
-          }
-        }
         if (b.type === "skill" && b.text) {
           skills.add(b.text);
         }
@@ -842,16 +836,12 @@ function renderSessionMeta(messages) {
     }
   }
 
-  if (!skills.size && !hooks.size) return "";
+  if (!skills.size) return "";
 
   let html =
-    '<div class="detail-section"><h3>Skills & Hooks</h3><div class="badge-row">';
+    '<div class="detail-section"><h3>Skills</h3><div class="badge-row">';
   for (const s of skills) {
     html += `<span class="badge badge-skill">${escapeHTML(s)}</span>`;
-  }
-  for (const h of hooks) {
-    const short = h.length > 50 ? h.slice(0, 50) + "..." : h;
-    html += `<span class="badge badge-hook" title="${escapeHTML(h)}">${escapeHTML(short)}</span>`;
   }
   html += "</div></div>";
   return html;
