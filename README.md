@@ -83,6 +83,32 @@ kiroku reindex [--full]
 
 By default, only files changed since the last run are re-indexed. Use `-full` to drop all data and rebuild from scratch.
 
+### `list`
+
+List sessions in fzf-friendly tab-separated format. By default, only sessions from the current directory are shown.
+
+```
+kiroku list [options]
+```
+
+| Option     | Default           | Description                          |
+|------------|-------------------|--------------------------------------|
+| `-project` | current directory | Filter by project path               |
+| `-all`     | `false`           | Show sessions from all projects      |
+| `-branch`  |                   | Filter by git branch                 |
+| `-from`    |                   | Filter by start date (`YYYY-MM-DD`)  |
+| `-to`      |                   | Filter by end date (`YYYY-MM-DD`)    |
+| `-q`       |                   | Full-text search across all messages |
+| `-sort`    | `recent`          | Sort order: `recent`, `longest`, `tools` |
+| `-limit`   | `50`              | Maximum number of sessions (max 100) |
+| `-json`    | `false`           | Output as JSON Lines                 |
+
+Combine with `fzf` and `resume` to quickly find and resume a session:
+
+```
+kiroku resume $(kiroku list -all | fzf | awk '{print $1}')
+```
+
 ### `resume`
 
 Resume a Claude Code session by ID. Runs `claude --resume <session-id>` in the session's original working directory.
