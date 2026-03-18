@@ -955,18 +955,25 @@ func TestReindexIndexesHookProgress(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if got, want := hookCount(t, dbPath, "session-1", "PreToolUse"), 2; got != want {
-		t.Fatalf("PreToolUse hook count = %d, want %d", got, want)
+	// PreToolUse with validate.sh: 2
+	if got, want := hookCount(t, dbPath, "session-1", "PreToolUse", "~/.config/claude/hooks/validate.sh"), 2; got != want {
+		t.Fatalf("PreToolUse validate.sh count = %d, want %d", got, want)
 	}
-	if got, want := hookCount(t, dbPath, "session-1", "PostToolUse"), 1; got != want {
-		t.Fatalf("PostToolUse hook count = %d, want %d", got, want)
+	// PostToolUse with callback: 1
+	if got, want := hookCount(t, dbPath, "session-1", "PostToolUse", "callback"), 1; got != want {
+		t.Fatalf("PostToolUse callback count = %d, want %d", got, want)
 	}
-	if got, want := hookCount(t, dbPath, "session-1", "UserPromptSubmit"), 1; got != want {
-		t.Fatalf("UserPromptSubmit hook count = %d, want %d", got, want)
+	// UserPromptSubmit with prompt-check.sh: 1
+	if got, want := hookCount(t, dbPath, "session-1", "UserPromptSubmit", "~/.config/claude/hooks/prompt-check.sh"), 1; got != want {
+		t.Fatalf("UserPromptSubmit prompt-check.sh count = %d, want %d", got, want)
+	}
+	// Total hooks: 4
+	if got, want := hookCountAll(t, dbPath, "session-1"), 4; got != want {
+		t.Fatalf("total hook count = %d, want %d", got, want)
 	}
 }
 
-func hookCount(t *testing.T, dbPath, sessionID, hookEvent string) int {
+func hookCount(t *testing.T, dbPath, sessionID, hookEvent, command string) int {
 	t.Helper()
 
 	db := openDB(t, dbPath)
@@ -974,9 +981,27 @@ func hookCount(t *testing.T, dbPath, sessionID, hookEvent string) int {
 
 	var count int
 	if err := db.QueryRow(
-		`SELECT count FROM session_hooks WHERE session_id = ? AND hook_event = ?`,
+		`SELECT count FROM session_hooks WHERE session_id = ? AND hook_event = ? AND command = ?`,
 		sessionID,
 		hookEvent,
+		command,
+	).Scan(&count); err != nil {
+		t.Fatal(err)
+	}
+
+	return count
+}
+
+func hookCountAll(t *testing.T, dbPath, sessionID string) int {
+	t.Helper()
+
+	db := openDB(t, dbPath)
+	defer db.Close()
+
+	var count int
+	if err := db.QueryRow(
+		`SELECT COALESCE(SUM(count), 0) FROM session_hooks WHERE session_id = ?`,
+		sessionID,
 	).Scan(&count); err != nil {
 		t.Fatal(err)
 	}

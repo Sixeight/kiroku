@@ -59,6 +59,7 @@ type SessionDetail struct {
 
 type SessionHook struct {
 	HookEvent string `json:"hook_event"`
+	Command   string `json:"command"`
 	Count     int    `json:"count"`
 }
 
@@ -242,9 +243,9 @@ func (s *SQLiteStore) analytics(ctx context.Context, modelUsage map[string]Model
 
 	hookRows, err := s.db.QueryContext(
 		ctx,
-		`SELECT hook_event, COALESCE(SUM(count), 0), COUNT(*)
+		`SELECT hook_event, command, COALESCE(SUM(count), 0), COUNT(*)
 		   FROM session_hooks
-		  GROUP BY hook_event
+		  GROUP BY hook_event, command
 		  ORDER BY SUM(count) DESC, hook_event ASC`,
 	)
 	if err != nil {
@@ -254,7 +255,7 @@ func (s *SQLiteStore) analytics(ctx context.Context, modelUsage map[string]Model
 
 	for hookRows.Next() {
 		var item HookAggregate
-		if err := hookRows.Scan(&item.Event, &item.Count, &item.SessionCount); err != nil {
+		if err := hookRows.Scan(&item.Event, &item.Command, &item.Count, &item.SessionCount); err != nil {
 			return Analytics{}, err
 		}
 		analytics.TopHooks = append(analytics.TopHooks, item)
@@ -697,7 +698,7 @@ func (s *SQLiteStore) GetSession(ctx context.Context, sessionID string) (Session
 
 	hookRows, err := s.db.QueryContext(
 		ctx,
-		`SELECT hook_event, count
+		`SELECT hook_event, command, count
 		 FROM session_hooks
 		 WHERE session_id = ?
 		 ORDER BY count DESC, hook_event ASC`,
@@ -710,7 +711,7 @@ func (s *SQLiteStore) GetSession(ctx context.Context, sessionID string) (Session
 
 	for hookRows.Next() {
 		var hook SessionHook
-		if err := hookRows.Scan(&hook.HookEvent, &hook.Count); err != nil {
+		if err := hookRows.Scan(&hook.HookEvent, &hook.Command, &hook.Count); err != nil {
 			return SessionDetail{}, err
 		}
 		detail.Hooks = append(detail.Hooks, hook)
@@ -1324,10 +1325,10 @@ func (s *SQLiteStore) GetDailyStats(ctx context.Context, date string) (DailyStat
 	}
 
 	hookRows, err := s.db.QueryContext(ctx,
-		`SELECT sh.hook_event, SUM(sh.count) AS total, COUNT(DISTINCT sh.session_id)
+		`SELECT sh.hook_event, sh.command, SUM(sh.count) AS total, COUNT(DISTINCT sh.session_id)
 		 FROM session_hooks sh JOIN sessions s ON sh.session_id = s.session_id
 		 WHERE substr(s.started_at, 1, 10) = ?
-		 GROUP BY sh.hook_event
+		 GROUP BY sh.hook_event, sh.command
 		 ORDER BY total DESC, sh.hook_event ASC`, date)
 	if err != nil {
 		return DailyStats{}, err
@@ -1335,7 +1336,7 @@ func (s *SQLiteStore) GetDailyStats(ctx context.Context, date string) (DailyStat
 	defer hookRows.Close()
 	for hookRows.Next() {
 		var h HookAggregate
-		if err := hookRows.Scan(&h.Event, &h.Count, &h.SessionCount); err != nil {
+		if err := hookRows.Scan(&h.Event, &h.Command, &h.Count, &h.SessionCount); err != nil {
 			return DailyStats{}, err
 		}
 		stats.TopHooks = append(stats.TopHooks, h)

@@ -129,6 +129,7 @@ type ModelAggregate struct {
 
 type HookAggregate struct {
 	Event        string `json:"event"`
+	Command      string `json:"command"`
 	Count        int    `json:"count"`
 	SessionCount int    `json:"session_count"`
 }

@@ -857,6 +857,12 @@ h1 {
   color: var(--muted);
 }
 
+.hook-label {
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 0.7rem;
+  color: var(--text);
+}
+
 .hook-count {
   display: inline-flex;
   align-items: center;

@@ -89,6 +89,8 @@ type transcriptRecord struct {
 type progressData struct {
 	Type      string `json:"type"`
 	HookEvent string `json:"hookEvent"`
+	HookName  string `json:"hookName"`
+	Command   string `json:"command"`
 }
 
 type messagePayload struct {
@@ -231,8 +233,9 @@ CREATE TABLE IF NOT EXISTS files(
 CREATE TABLE IF NOT EXISTS session_hooks(
   session_id TEXT,
   hook_event TEXT,
+  command TEXT,
   count INTEGER,
-  PRIMARY KEY(session_id, hook_event)
+  PRIMARY KEY(session_id, hook_event, command)
 );
 
 CREATE VIRTUAL TABLE IF NOT EXISTS session_content_fts USING fts5(
@@ -389,7 +392,8 @@ func aggregateRecord(sessions map[string]*sessionAggregate, state fileState, rec
 	if record.Type == "progress" && record.Data != nil && record.Data.Type == "hook_progress" && record.Data.HookEvent != "" {
 		session := getOrCreateSession(sessions, state, record)
 		updateBounds(session, record.Timestamp)
-		session.HookCounts[record.Data.HookEvent]++
+		key := record.Data.HookEvent + "\t" + record.Data.Command
+		session.HookCounts[key]++
 		return
 	}
 
@@ -691,13 +695,15 @@ func (i *Indexer) replaceFileSessions(ctx context.Context, state fileState, sess
 			}
 		}
 
-		for hookEvent, count := range session.HookCounts {
+		for key, count := range session.HookCounts {
+			hookEvent, command, _ := strings.Cut(key, "\t")
 			if _, err = tx.ExecContext(
 				ctx,
-				`INSERT INTO session_hooks(session_id, hook_event, count) VALUES (?, ?, ?)
-				 ON CONFLICT(session_id, hook_event) DO UPDATE SET count = excluded.count`,
+				`INSERT INTO session_hooks(session_id, hook_event, command, count) VALUES (?, ?, ?, ?)
+				 ON CONFLICT(session_id, hook_event, command) DO UPDATE SET count = excluded.count`,
 				session.SessionID,
 				hookEvent,
+				command,
 				count,
 			); err != nil {
 				return err
