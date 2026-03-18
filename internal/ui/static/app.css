@@ -837,44 +837,43 @@ h1 {
 .hooks-bar {
   display: flex;
   flex-wrap: wrap;
-  gap: 8px;
+  gap: 6px;
 }
 
 .hook-pill {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
-  padding: 4px 10px 4px 8px;
-  border-radius: 999px;
-  background: var(--surface-dim);
-  border: 1px solid var(--panel-border);
-  font-size: 0.75rem;
+  gap: 4px;
+  max-width: 260px;
+  padding: 3px 8px;
+  border-radius: 8px;
+  background: var(--accent-soft);
+  font-size: 0.72rem;
+}
+
+.hook-event,
+.hook-label {
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 0.68rem;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
 }
 
 .hook-event {
-  font-family: "IBM Plex Mono", monospace;
-  font-size: 0.7rem;
   color: var(--muted);
 }
 
 .hook-label {
-  font-family: "IBM Plex Mono", monospace;
-  font-size: 0.7rem;
   color: var(--text);
 }
 
 .hook-count {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  min-width: 18px;
-  height: 18px;
-  padding: 0 5px;
-  border-radius: 999px;
-  background: var(--accent-soft);
-  color: var(--accent);
+  flex-shrink: 0;
   font-size: 0.65rem;
   font-weight: 600;
+  color: var(--muted);
+  opacity: 0.7;
 }
 
 .badge-pr {

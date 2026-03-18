@@ -66,11 +66,19 @@ function formatCost(dollars) {
 
 // ── Hook formatting ─────────────────────────────────
 
+function formatHookLabel(command) {
+  if (!command || command === "callback") return "";
+  // File path: show basename without .sh
+  if (command.includes("/"))
+    return command.split("/").pop().replace(/\.sh$/, "");
+  // Inline script: truncate
+  return command.length > 30 ? command.slice(0, 30) + "\u2026" : command;
+}
+
 function formatHookPill(event, command, count) {
-  const cmd = command && command !== "callback" ? command : "";
-  const label = cmd ? cmd.split("/").pop().replace(/\.sh$/, "") : event;
-  const title = cmd || event;
-  const tag = cmd
+  const label = formatHookLabel(command);
+  const title = command && command !== "callback" ? command : event;
+  const tag = label
     ? `<span class="hook-label">${escapeHTML(label)}</span>`
     : `<span class="hook-event">${escapeHTML(event)}</span>`;
   return `<div class="hook-pill" title="${escapeHTML(title)}">${tag}<span class="hook-count">${count}</span></div>`;
