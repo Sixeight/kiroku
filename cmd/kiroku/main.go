@@ -44,6 +44,7 @@ Usage:
 
 Commands:
   open      Start the web dashboard (default: http://localhost:4319)
+  list      List sessions (fzf-friendly tab-separated output)
   doctor    Check configuration paths and data health
   reindex   Rebuild the session index from JSONL files
   resume    Resume a Claude Code session by ID
@@ -64,6 +65,8 @@ func run(ctx context.Context, stdout, stderr io.Writer, args []string) error {
 		return runDoctor(ctx, stdout, stderr, args[1:])
 	case "reindex":
 		return runReindex(ctx, stdout, stderr, args[1:])
+	case "list":
+		return runList(ctx, stdout, stderr, args[1:])
 	case "resume":
 		return runResume(ctx, stdout, stderr, args[1:])
 	default:
@@ -340,6 +343,124 @@ func countBrokenLines(path string) (int, error) {
 	}
 
 	return broken, nil
+}
+
+func runList(ctx context.Context, stdout, stderr io.Writer, args []string) error {
+	fs := flag.NewFlagSet("list", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	fs.Usage = func() {
+		fmt.Fprintf(stderr, `List sessions in fzf-friendly tab-separated format.
+
+Output columns: SESSION_ID, STARTED, PROJECT, BRANCH, MSGS, TOOLS, PREVIEW
+
+Usage:
+  kiroku list [options]
+
+Examples:
+  kiroku list
+  kiroku list -all
+  kiroku list -branch main -sort longest
+  kiroku resume $(kiroku list -all | fzf | awk '{print $1}')
+
+Options:
+`)
+		fs.PrintDefaults()
+	}
+
+	limit := fs.Int("limit", 50, "maximum number of sessions (max 100)")
+	project := fs.String("project", "", "filter by project path (default: current directory)")
+	all := fs.Bool("all", false, "show sessions from all projects")
+	branch := fs.String("branch", "", "filter by git branch")
+	from := fs.String("from", "", "filter by start date (YYYY-MM-DD)")
+	to := fs.String("to", "", "filter by end date (YYYY-MM-DD)")
+	q := fs.String("q", "", "search preview, cwd, and branch")
+	sortBy := fs.String("sort", "recent", "sort order: recent, longest, tools")
+	jsonOut := fs.Bool("json", false, "output as JSON lines")
+	if err := fs.Parse(args); err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			return nil
+		}
+		return err
+	}
+
+	cwd := *project
+	if !*all && cwd == "" {
+		wd, err := os.Getwd()
+		if err != nil {
+			return err
+		}
+		cwd = wd
+	}
+
+	paths, err := config.DiscoverPaths()
+	if err != nil {
+		return err
+	}
+
+	dbPath := filepath.Join(paths.CacheRoot, "index.sqlite")
+	if _, err := os.Stat(dbPath); err != nil {
+		return errors.New("no index found; run 'kiroku reindex' first")
+	}
+
+	reader, err := store.OpenSQLite(dbPath)
+	if err != nil {
+		return err
+	}
+	defer reader.Close()
+
+	sessions, _, err := reader.ListSessions(ctx, store.ListSessionsParams{
+		Limit:  *limit,
+		CWD:    cwd,
+		Branch: *branch,
+		From:   *from,
+		To:     *to,
+		Q:      *q,
+		Sort:   *sortBy,
+	})
+	if err != nil {
+		return err
+	}
+
+	if *jsonOut {
+		enc := json.NewEncoder(stdout)
+		for _, s := range sessions {
+			if err := enc.Encode(s); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+
+	for _, s := range sessions {
+		fmt.Fprintln(stdout, formatListLine(s))
+	}
+	return nil
+}
+
+func formatListLine(s store.RecentSessionSummary) string {
+	started := formatShortTime(s.StartedAt)
+	project := filepath.Base(s.CWD)
+	preview := sanitizePreview(s.Preview, 60)
+	return fmt.Sprintf("%s\t%s\t%s\t%s\t%d\t%d\t%s",
+		s.SessionID, started, project, s.GitBranch,
+		s.MessageCount, s.ToolCallCount, preview)
+}
+
+func formatShortTime(iso string) string {
+	t, err := time.Parse(time.RFC3339, iso)
+	if err != nil {
+		return iso
+	}
+	return t.Local().Format("2006-01-02 15:04")
+}
+
+func sanitizePreview(s string, maxRunes int) string {
+	s = strings.NewReplacer("\n", " ", "\r", "", "\t", " ").Replace(s)
+	runes := []rune(s)
+	if len(runes) > maxRunes {
+		return string(runes[:maxRunes]) + "..."
+	}
+	return s
 }
 
 func runResume(ctx context.Context, stdout, stderr io.Writer, args []string) error {

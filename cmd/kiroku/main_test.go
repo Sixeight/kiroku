@@ -206,6 +206,112 @@ func setupCLIEnv(t *testing.T) cliPaths {
 	}
 }
 
+func TestRunListOutputsSessions(t *testing.T) {
+	setupCLIEnv(t)
+
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	if err := run(context.Background(), &stdout, &stderr, []string{"reindex"}); err != nil {
+		t.Fatal(err)
+	}
+
+	stdout.Reset()
+	stderr.Reset()
+
+	if err := run(context.Background(), &stdout, &stderr, []string{"list", "-all"}); err != nil {
+		t.Fatal(err)
+	}
+
+	output := stdout.String()
+	lines := strings.Split(strings.TrimSpace(output), "\n")
+	if len(lines) != 1 {
+		t.Fatalf("expected 1 line, got %d: %q", len(lines), output)
+	}
+
+	fields := strings.Split(lines[0], "\t")
+	if len(fields) != 7 {
+		t.Fatalf("expected 7 tab-separated fields, got %d: %q", len(fields), lines[0])
+	}
+
+	if fields[0] != "session-1" {
+		t.Fatalf("fields[0] = %q, want %q", fields[0], "session-1")
+	}
+
+	if fields[2] != "project-core" {
+		t.Fatalf("fields[2] (project) = %q, want %q", fields[2], "project-core")
+	}
+
+	if fields[3] != "main" {
+		t.Fatalf("fields[3] (branch) = %q, want %q", fields[3], "main")
+	}
+}
+
+func TestRunListJSONOutput(t *testing.T) {
+	setupCLIEnv(t)
+
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	if err := run(context.Background(), &stdout, &stderr, []string{"reindex"}); err != nil {
+		t.Fatal(err)
+	}
+
+	stdout.Reset()
+	stderr.Reset()
+
+	if err := run(context.Background(), &stdout, &stderr, []string{"list", "-all", "-json"}); err != nil {
+		t.Fatal(err)
+	}
+
+	var result map[string]any
+	if err := json.Unmarshal(stdout.Bytes(), &result); err != nil {
+		t.Fatalf("invalid JSON: %v, output: %q", err, stdout.String())
+	}
+
+	if result["session_id"] != "session-1" {
+		t.Fatalf("session_id = %q, want %q", result["session_id"], "session-1")
+	}
+}
+
+func TestRunListDefaultFiltersByCurrentDir(t *testing.T) {
+	setupCLIEnv(t)
+
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	if err := run(context.Background(), &stdout, &stderr, []string{"reindex"}); err != nil {
+		t.Fatal(err)
+	}
+
+	stdout.Reset()
+	stderr.Reset()
+
+	// CWD is the test's temp dir, not /tmp/project-core, so no sessions should match
+	if err := run(context.Background(), &stdout, &stderr, []string{"list"}); err != nil {
+		t.Fatal(err)
+	}
+
+	output := strings.TrimSpace(stdout.String())
+	if output != "" {
+		t.Fatalf("expected no output for non-matching CWD, got: %q", output)
+	}
+}
+
+func TestRunListNoIndexReturnsError(t *testing.T) {
+	setupCLIEnv(t)
+
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+
+	// Don't reindex — DB should not exist
+	err := run(context.Background(), &stdout, &stderr, []string{"list", "-all"})
+	if err == nil {
+		t.Fatal("expected error when no index exists")
+	}
+
+	if !strings.Contains(err.Error(), "kiroku reindex") {
+		t.Fatalf("error = %q, want mention of 'kiroku reindex'", err.Error())
+	}
+}
+
 func waitForAddress(t *testing.T, stdout *bytes.Buffer) string {
 	t.Helper()
 
