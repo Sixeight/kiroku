@@ -41,6 +41,7 @@ type ListSessionsParams struct {
 	CWD     string
 	Branch  string
 	Model   string
+	Tool    string
 	From    string
 	To      string
 	Sort    string
@@ -427,6 +428,10 @@ func (s *SQLiteStore) ListSessions(ctx context.Context, params ListSessionsParam
 		filters = append(filters, "EXISTS (SELECT 1 FROM session_models sm WHERE sm.session_id = sessions.session_id AND sm.model = ?)")
 		args = append(args, params.Model)
 	}
+	if params.Tool != "" {
+		filters = append(filters, "EXISTS (SELECT 1 FROM session_tools st WHERE st.session_id = sessions.session_id AND st.tool_name = ?)")
+		args = append(args, params.Tool)
+	}
 	if params.Content != "" {
 		ftsQuery := sanitizeFTS5Query(params.Content)
 		if ftsQuery != "" {
@@ -440,7 +445,8 @@ func (s *SQLiteStore) ListSessions(ctx context.Context, params ListSessionsParam
 	  sessions.message_count, sessions.tool_call_count, sessions.preview,
 	  COALESCE(tm.total_input, 0), COALESCE(tm.total_output, 0),
 	  COALESCE(tm.total_cache_read, 0), COALESCE(tm.total_cache_write, 0),
-	  COALESCE((SELECT model FROM session_models WHERE session_id = sessions.session_id ORDER BY output_tokens DESC LIMIT 1), '')
+	  COALESCE((SELECT model FROM session_models WHERE session_id = sessions.session_id ORDER BY output_tokens DESC LIMIT 1), ''),
+	  sessions.source_path
 	FROM sessions
 	LEFT JOIN (
 	  SELECT session_id, SUM(input_tokens) AS total_input, SUM(output_tokens) AS total_output,
@@ -476,6 +482,7 @@ func (s *SQLiteStore) ListSessions(ctx context.Context, params ListSessionsParam
 			&session.CacheReadTokens,
 			&session.CacheWriteTokens,
 			&session.PrimaryModel,
+			&session.SourcePath,
 		); err != nil {
 			return nil, "", err
 		}
@@ -1198,6 +1205,85 @@ func (s *SQLiteStore) GetProjectStats(ctx context.Context, cwd string) (ProjectS
 	}
 	if err := branchRows.Err(); err != nil {
 		return ProjectStats{}, err
+	}
+
+	return stats, nil
+}
+
+func (s *SQLiteStore) GetDailyStats(ctx context.Context, date string) (DailyStats, error) {
+	stats := DailyStats{Date: date}
+
+	err := s.db.QueryRowContext(ctx,
+		`SELECT COUNT(*), COALESCE(SUM(message_count), 0), COALESCE(SUM(tool_call_count), 0)
+		 FROM sessions
+		 WHERE substr(started_at, 1, 10) = ?`, date,
+	).Scan(&stats.TotalSessions, &stats.TotalMessages, &stats.TotalToolCalls)
+	if err != nil {
+		return DailyStats{}, err
+	}
+
+	err = s.db.QueryRowContext(ctx,
+		`SELECT COALESCE(SUM(sm.input_tokens), 0), COALESCE(SUM(sm.output_tokens), 0),
+		        COALESCE(SUM(sm.cache_read_tokens), 0), COALESCE(SUM(sm.cache_write_tokens), 0)
+		 FROM session_models sm JOIN sessions s ON sm.session_id = s.session_id
+		 WHERE substr(s.started_at, 1, 10) = ?`, date,
+	).Scan(&stats.InputTokens, &stats.OutputTokens, &stats.CacheReadTokens, &stats.CacheWriteTokens)
+	if err != nil {
+		return DailyStats{}, err
+	}
+
+	toolRows, err := s.db.QueryContext(ctx,
+		`SELECT st.tool_name, SUM(st.count) AS total, COUNT(DISTINCT st.session_id)
+		 FROM session_tools st JOIN sessions s ON st.session_id = s.session_id
+		 WHERE substr(s.started_at, 1, 10) = ?
+		 GROUP BY st.tool_name
+		 ORDER BY total DESC, st.tool_name ASC`, date)
+	if err != nil {
+		return DailyStats{}, err
+	}
+	defer toolRows.Close()
+	for toolRows.Next() {
+		var t ToolAggregate
+		if err := toolRows.Scan(&t.Name, &t.Count, &t.SessionCount); err != nil {
+			return DailyStats{}, err
+		}
+		stats.TopTools = append(stats.TopTools, t)
+	}
+	if err := toolRows.Err(); err != nil {
+		return DailyStats{}, err
+	}
+
+	modelRows, err := s.db.QueryContext(ctx,
+		`SELECT sm.model, COUNT(DISTINCT sm.session_id),
+		        SUM(sm.input_tokens), SUM(sm.output_tokens),
+		        SUM(sm.cache_read_tokens), SUM(sm.cache_write_tokens)
+		 FROM session_models sm JOIN sessions s ON sm.session_id = s.session_id
+		 WHERE substr(s.started_at, 1, 10) = ?
+		 GROUP BY sm.model
+		 ORDER BY SUM(sm.output_tokens) DESC, sm.model ASC`, date)
+	if err != nil {
+		return DailyStats{}, err
+	}
+	defer modelRows.Close()
+	for modelRows.Next() {
+		var m ModelAggregate
+		if err := modelRows.Scan(&m.Name, &m.SessionCount, &m.InputTokens, &m.OutputTokens, &m.CacheReadTokens, &m.CacheWriteTokens); err != nil {
+			return DailyStats{}, err
+		}
+		stats.TopModels = append(stats.TopModels, m)
+	}
+	if err := modelRows.Err(); err != nil {
+		return DailyStats{}, err
+	}
+
+	stats.Sessions, _, err = s.ListSessions(ctx, ListSessionsParams{
+		Limit: 100,
+		From:  date + "T00:00:00Z",
+		To:    date + "T23:59:59Z",
+		Sort:  "recent",
+	})
+	if err != nil {
+		return DailyStats{}, err
 	}
 
 	return stats, nil

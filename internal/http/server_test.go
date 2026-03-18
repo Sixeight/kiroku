@@ -206,6 +206,54 @@ func serverSessionTwoLog() string {
 `
 }
 
+func TestServerDailyStatsEndpoint(t *testing.T) {
+	handler := newTestHandler(t, nil)
+
+	// Missing date parameter → 400
+	req := httptest.NewRequest(http.MethodGet, "/api/stats/daily", nil)
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("GET /api/stats/daily (no date) status = %d, want %d", rec.Code, http.StatusBadRequest)
+	}
+
+	// Valid date
+	req = httptest.NewRequest(http.MethodGet, "/api/stats/daily?date=2026-03-15", nil)
+	rec = httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET /api/stats/daily?date=2026-03-15 status = %d, want %d", rec.Code, http.StatusOK)
+	}
+
+	var stats store.DailyStats
+	if err := json.Unmarshal(rec.Body.Bytes(), &stats); err != nil {
+		t.Fatal(err)
+	}
+
+	if got, want := stats.Date, "2026-03-15"; got != want {
+		t.Fatalf("date = %q, want %q", got, want)
+	}
+
+	if got, want := stats.TotalSessions, 2; got != want {
+		t.Fatalf("total sessions = %d, want %d", got, want)
+	}
+
+	if len(stats.Sessions) != 2 {
+		t.Fatalf("sessions len = %d, want 2", len(stats.Sessions))
+	}
+
+	// Wrong method → 405
+	req = httptest.NewRequest(http.MethodPost, "/api/stats/daily?date=2026-03-15", nil)
+	rec = httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusMethodNotAllowed {
+		t.Fatalf("POST /api/stats/daily status = %d, want %d", rec.Code, http.StatusMethodNotAllowed)
+	}
+}
+
 func TestServerReturns404ForUnknownPaths(t *testing.T) {
 	handler := newTestHandler(t, nil)
 

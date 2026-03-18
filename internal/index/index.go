@@ -99,9 +99,10 @@ type usagePayload struct {
 }
 
 type contentBlock struct {
-	Type string `json:"type"`
-	Text string `json:"text"`
-	Name string `json:"name"`
+	Type  string          `json:"type"`
+	Text  string          `json:"text"`
+	Name  string          `json:"name"`
+	Input json.RawMessage `json:"input"`
 }
 
 func Open(path string) (*Indexer, error) {
@@ -419,15 +420,42 @@ func aggregateRecord(sessions map[string]*sessionAggregate, state fileState, rec
 		case "tool_use":
 			session.ToolCallCount++
 			if block.Name != "" {
-				session.ToolCounts[block.Name]++
+				name := block.Name
+				if name == "Skill" && len(block.Input) > 0 {
+					var skillInput struct {
+						Skill string `json:"skill"`
+					}
+					if json.Unmarshal(block.Input, &skillInput) == nil && skillInput.Skill != "" {
+						name = "auto:/" + skillInput.Skill
+					}
+				}
+				if name == "Agent" && len(block.Input) > 0 {
+					var agentInput struct {
+						SubagentType string `json:"subagent_type"`
+						Description  string `json:"description"`
+					}
+					if json.Unmarshal(block.Input, &agentInput) == nil {
+						if agentInput.SubagentType != "" {
+							name = "agent:" + agentInput.SubagentType
+						} else if agentInput.Description != "" {
+							name = "agent:" + agentInput.Description
+						}
+					}
+				}
+				session.ToolCounts[name]++
 			}
 		case "text":
 			if block.Text != "" {
 				session.textParts = append(session.textParts, block.Text)
 			}
-			if record.Message.Role == "user" && session.Preview == "" && block.Text != "" {
-				if p := cleanPreview(block.Text); p != "" {
-					session.Preview = p
+			if record.Message.Role == "user" && block.Text != "" {
+				if m := commandNameRe.FindStringSubmatch(block.Text); len(m) > 1 {
+					session.ToolCounts[m[1]]++
+				}
+				if session.Preview == "" {
+					if p := cleanPreview(block.Text); p != "" {
+						session.Preview = p
+					}
 				}
 			}
 		}

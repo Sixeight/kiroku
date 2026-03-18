@@ -65,6 +65,7 @@ func NewHandler(opts Options) (stdhttp.Handler, error) {
 	mux.HandleFunc("/api/sessions", h.handleSessions)
 	mux.HandleFunc("/api/sessions/", h.handleSessionDetail)
 	mux.HandleFunc("/api/projects/summary", h.handleProjectSummary)
+	mux.HandleFunc("/api/stats/daily", h.handleDailyStats)
 	mux.HandleFunc("/api/reindex", h.handleReindex)
 	mux.HandleFunc("/healthz", h.handleHealthz)
 
@@ -155,6 +156,7 @@ func (h *handler) handleSessions(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 		CWD:     r.URL.Query().Get("cwd"),
 		Branch:  r.URL.Query().Get("branch"),
 		Model:   r.URL.Query().Get("model"),
+		Tool:    r.URL.Query().Get("tool"),
 		From:    r.URL.Query().Get("from"),
 		To:      r.URL.Query().Get("to"),
 		Sort:    r.URL.Query().Get("sort"),
@@ -251,6 +253,27 @@ func (h *handler) handleProjectSummary(w stdhttp.ResponseWriter, r *stdhttp.Requ
 	}
 
 	stats, err := h.store.GetProjectStats(r.Context(), cwd)
+	if err != nil {
+		writeError(w, err, stdhttp.StatusInternalServerError)
+		return
+	}
+
+	writeJSON(w, stdhttp.StatusOK, stats)
+}
+
+func (h *handler) handleDailyStats(w stdhttp.ResponseWriter, r *stdhttp.Request) {
+	if r.Method != stdhttp.MethodGet {
+		writeJSON(w, stdhttp.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		return
+	}
+
+	date := r.URL.Query().Get("date")
+	if date == "" {
+		writeJSON(w, stdhttp.StatusBadRequest, map[string]string{"error": "date is required"})
+		return
+	}
+
+	stats, err := h.store.GetDailyStats(r.Context(), date)
 	if err != nil {
 		writeError(w, err, stdhttp.StatusInternalServerError)
 		return

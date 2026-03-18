@@ -6,6 +6,7 @@ let currentCWD = "";
 let currentContentSearch = "";
 let isIndexing = false;
 let conversationReversed = false;
+let prevView = "";
 
 // ── Cost estimation ─────────────────────────────────
 
@@ -69,15 +70,26 @@ function navigate() {
   const hash = location.hash;
   const homeView = document.getElementById("home-view");
   const detailView = document.getElementById("detail-view");
+  const dailyView = document.getElementById("daily-view");
+
+  homeView.hidden = true;
+  detailView.hidden = true;
+  if (dailyView) dailyView.hidden = true;
 
   if (hash.startsWith("#/sessions/")) {
     const sessionId = decodeURIComponent(hash.slice("#/sessions/".length));
-    homeView.hidden = true;
     detailView.hidden = false;
     loadSessionDetail(sessionId);
+  } else if (hash.startsWith("#/daily/")) {
+    prevView = "";
+    const date = decodeURIComponent(hash.slice("#/daily/".length));
+    if (dailyView) {
+      dailyView.hidden = false;
+      loadDailyStats(date);
+    }
   } else {
+    prevView = "";
     homeView.hidden = false;
-    detailView.hidden = true;
   }
 }
 
@@ -120,7 +132,13 @@ window.addEventListener("DOMContentLoaded", () => {
   window.setInterval(refreshStats, 5000);
 });
 
-window.addEventListener("hashchange", navigate);
+window.addEventListener("hashchange", (e) => {
+  const oldHash = e.oldURL ? new URL(e.oldURL).hash : "";
+  if (oldHash.startsWith("#/daily/")) {
+    prevView = oldHash;
+  }
+  navigate();
+});
 
 // ── Session controls ────────────────────────────────
 
@@ -313,6 +331,14 @@ function renderTimeline(dailyActivity) {
   });
   svg.addEventListener("mouseleave", () => {
     tooltip.hidden = true;
+  });
+  svg.addEventListener("click", (e) => {
+    const hit = e.target.closest("[data-idx]");
+    if (!hit) return;
+    const d = days[hit.dataset.idx];
+    if (d.sessionCount > 0) {
+      location.hash = `#/daily/${d.date}`;
+    }
   });
 }
 
@@ -699,9 +725,11 @@ function renderSessionDetail(detail, messages, hasMore) {
   const models = detail.models || [];
   const totalCost = calculateCostFromModels(models);
 
+  const backHref = prevView || "#/";
+  const backLabel = prevView ? "\u2190 Daily" : "\u2190 Sessions";
   root.innerHTML = `
     <div class="detail-header">
-      <a href="#/" class="back">\u2190 Sessions</a>
+      <a href="${backHref}" class="back">${backLabel}</a>
       <button class="action-icon resume-icon has-tooltip" type="button" data-tooltip="Copy resume" onclick="copyResumeCommand('${escapeHTML(meta.session_id || "")}', '${escapeHTML(meta.cwd || "")}', this)">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
       </button>
@@ -1294,4 +1322,503 @@ function formatLocalTime(isoString) {
 
 function formatNumber(value) {
   return new Intl.NumberFormat("en-US").format(Number(value || 0));
+}
+
+// ── Daily stats ─────────────────────────────────────
+
+async function loadDailyStats(date) {
+  const root = document.getElementById("daily-view");
+  if (!root) return;
+  root.innerHTML = '<p class="empty">Loading...</p>';
+
+  const res = await fetch(`/api/stats/daily?date=${encodeURIComponent(date)}`);
+  if (!res.ok) {
+    root.innerHTML = '<p class="empty">Failed to load daily stats.</p>';
+    return;
+  }
+
+  const stats = await res.json();
+  renderDailyStats(stats);
+}
+
+function renderDailyStats(stats) {
+  const root = document.getElementById("daily-view");
+  if (!root) return;
+
+  const cost = stats.top_models ? calculateCostFromModels(stats.top_models) : 0;
+
+  const isSkill = (t) => t.name.startsWith("/") || t.name.startsWith("auto:/");
+  const isAgent = (t) => t.name.startsWith("agent:");
+  const allTools = stats.top_tools || [];
+  const skills = allTools.filter(isSkill);
+  const agents = allTools.filter(isAgent);
+  const tools = allTools.filter((t) => !isSkill(t) && !isAgent(t));
+
+  const TOP_N = 8;
+  const toolRowFn = (t) =>
+    `<div class="detail-row daily-skill-filter" style="cursor:pointer" data-tool="${escapeHTML(t.name)}"><span>${escapeHTML(t.name)}</span><strong>${formatNumber(t.count)}</strong></div>`;
+  const visibleTools = tools.slice(0, TOP_N);
+  const hiddenTools = tools.slice(TOP_N);
+  let toolRows = visibleTools.map(toolRowFn).join("");
+  if (hiddenTools.length) {
+    toolRows +=
+      `<details class="daily-expand"><summary>${hiddenTools.length} more</summary><div class="detail-rows">` +
+      hiddenTools.map(toolRowFn).join("") +
+      `</div></details>`;
+  }
+
+  const modelRows = (stats.top_models || [])
+    .map((m) => {
+      const mCost = calculateCostForItem(m);
+      return `<div class="detail-row"><span>${escapeHTML(m.name)}</span><strong>${formatCost(mCost)}</strong></div>`;
+    })
+    .join("");
+
+  const skillBadges = skills
+    .map((s) => {
+      const auto = s.name.startsWith("auto:");
+      const label = auto ? s.name.slice("auto:".length) : s.name;
+      const cls = auto ? "badge badge-skill-auto" : "badge badge-skill";
+      const tag = auto
+        ? ' <span style="opacity:0.5;font-size:0.65rem">auto</span>'
+        : "";
+      return `<span class="${cls} daily-skill-filter" style="cursor:pointer" data-tool="${escapeHTML(s.name)}">${escapeHTML(label)}${tag} <span style="opacity:0.6">${s.count}</span></span>`;
+    })
+    .join("");
+
+  const agentBadges = agents
+    .map((a) => {
+      const label = a.name.slice("agent:".length);
+      return `<span class="badge badge-agent daily-skill-filter" style="cursor:pointer" data-tool="${escapeHTML(a.name)}">${escapeHTML(label)} <span style="opacity:0.6">${a.count}</span></span>`;
+    })
+    .join("");
+
+  const sessionRows = (stats.sessions || [])
+    .map((s) => sessionItemHTML(s))
+    .join("");
+
+  const [y, m, d] = stats.date.split("-");
+  const dateLabel = `${parseInt(m)}/${parseInt(d)}/${y}`;
+
+  root.innerHTML = `
+    <a class="back" href="#/">&larr; Back</a>
+    <div class="detail-header">
+      <div>
+        <h2 class="detail-title">${escapeHTML(dateLabel)}</h2>
+      </div>
+      <button class="action-icon has-tooltip" type="button" data-tooltip="Copy prompt" onclick="copyDailyPrompt(this)">
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+      </button>
+    </div>
+
+    <div class="detail-stats">
+      <div class="detail-stat"><span>Sessions</span><strong>${stats.total_sessions}</strong></div>
+      <div class="detail-stat"><span>Messages</span><strong>${formatNumber(stats.total_messages)}</strong></div>
+      <div class="detail-stat"><span>Tool Calls</span><strong>${formatNumber(stats.total_tool_calls)}</strong></div>
+      <div class="detail-stat"><span>Est. Cost</span><strong>${formatCost(cost)}</strong></div>
+    </div>
+
+    <div class="detail-grid">
+      <div class="detail-section">
+        <h3>Tools</h3>
+        <div class="detail-rows">${toolRows || '<p class="empty">No tool usage</p>'}</div>
+      </div>
+      <div class="detail-section">
+        <h3>Models</h3>
+        <div class="detail-rows">${modelRows || '<p class="empty">No model usage</p>'}</div>
+      </div>
+    </div>
+
+    ${skillBadges ? `<div class="detail-section" style="margin-top: 16px"><h3>Skills</h3><div class="badge-row">${skillBadges}</div></div>` : ""}
+    ${agentBadges ? `<div class="detail-section" style="margin-top: 16px"><h3>Agents</h3><div class="badge-row">${agentBadges}</div></div>` : ""}
+
+    <div class="detail-section" style="margin-top: 24px">
+      <h3 id="daily-sessions-heading">Sessions
+        <button id="daily-sort-toggle" class="search-toggle" type="button">\u2193 Newest</button>
+        <button id="daily-search-toggle" class="search-toggle" type="button"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><circle cx="10" cy="10" r="7"/><line x1="15" y1="15" x2="21" y2="21"/></svg> Search</button>
+      </h3>
+      <div id="daily-filter-tags" class="badge-row" style="margin-bottom:8px"></div>
+      <div id="daily-search-bar" class="conversation-search">
+        <input id="daily-search-input" class="search-input" type="text" placeholder="Search message content..." />
+        <button class="search-clear" type="button" hidden>&times;</button>
+      </div>
+      <nav id="daily-project-filter"></nav>
+      <div id="daily-sessions-list" class="session-list">${sessionRows || '<p class="empty">No sessions</p>'}</div>
+    </div>
+  `;
+
+  root.dataset.stats = JSON.stringify(stats);
+  initDailyControls(stats);
+}
+
+const dailyFilters = { tool: "", cwd: "", content: "", dir: "desc", date: "" };
+
+function initDailyControls(stats) {
+  dailyFilters.date = stats.date;
+  dailyFilters.tool = "";
+  dailyFilters.cwd = "";
+  dailyFilters.content = "";
+  dailyFilters.dir = "desc";
+
+  const root = document.getElementById("daily-view");
+  if (!root) return;
+
+  // Tool/skill click
+  root.addEventListener("click", (e) => {
+    const trigger = e.target.closest(".daily-skill-filter");
+    if (trigger) {
+      const tool = trigger.dataset.tool;
+      dailyFilters.tool = dailyFilters.tool === tool ? "" : tool;
+      fetchDailySessions();
+      return;
+    }
+  });
+
+  // Sort
+  const sortBtn = document.getElementById("daily-sort-toggle");
+  if (sortBtn) {
+    sortBtn.addEventListener("click", () => {
+      dailyFilters.dir = dailyFilters.dir === "desc" ? "asc" : "desc";
+      sortBtn.textContent =
+        dailyFilters.dir === "desc" ? "\u2193 Newest" : "\u2191 Oldest";
+      fetchDailySessions();
+    });
+  }
+
+  // Search
+  const searchToggle = document.getElementById("daily-search-toggle");
+  const searchBar = document.getElementById("daily-search-bar");
+  const searchInput = document.getElementById("daily-search-input");
+  let debounce = null;
+  let comp = false;
+
+  if (searchToggle && searchBar && searchInput) {
+    const clearBtn = searchBar.querySelector(".search-clear");
+    searchToggle.addEventListener("click", () => {
+      const open = searchBar.classList.toggle("is-open");
+      searchToggle.classList.toggle("is-active", open);
+      if (open) {
+        searchInput.focus();
+      } else {
+        searchInput.value = "";
+        if (dailyFilters.content) {
+          dailyFilters.content = "";
+          fetchDailySessions();
+        }
+      }
+    });
+    searchInput.addEventListener("compositionstart", () => {
+      comp = true;
+    });
+    searchInput.addEventListener("compositionend", () => {
+      comp = false;
+      doSearch();
+    });
+    searchInput.addEventListener("input", () => {
+      if (!comp) doSearch();
+    });
+    searchInput.addEventListener("keydown", (e) => {
+      if (e.key === "Escape") {
+        searchInput.value = "";
+        dailyFilters.content = "";
+        searchBar.classList.remove("is-open");
+        searchToggle.classList.remove("is-active");
+        fetchDailySessions();
+      }
+    });
+    if (clearBtn) {
+      clearBtn.addEventListener("click", () => {
+        searchInput.value = "";
+        clearBtn.hidden = true;
+        dailyFilters.content = "";
+        fetchDailySessions();
+      });
+    }
+    function doSearch() {
+      if (clearBtn) clearBtn.hidden = !searchInput.value;
+      clearTimeout(debounce);
+      debounce = setTimeout(() => {
+        dailyFilters.content = searchInput.value.trim();
+        fetchDailySessions();
+      }, 300);
+    }
+  }
+
+  // Project filter
+  const filterRoot = document.getElementById("daily-project-filter");
+  if (filterRoot && stats.sessions && stats.sessions.length) {
+    const cwds = {};
+    for (const s of stats.sessions) {
+      if (s.cwd) {
+        const name = s.cwd.split("/").pop();
+        cwds[s.cwd] = (cwds[s.cwd] || 0) + 1;
+      }
+    }
+    const projects = Object.entries(cwds)
+      .map(([cwd, count]) => ({ name: cwd, session_count: count }))
+      .sort((a, b) => b.session_count - a.session_count);
+
+    if (projects.length > 1) {
+      filterRoot.innerHTML = `
+        <div class="filter-box">
+          <input class="filter-input" type="text" placeholder="Filter by project..." />
+          <button class="filter-clear" type="button" hidden>&times;</button>
+          <div class="filter-dropdown" hidden></div>
+        </div>`;
+      const input = filterRoot.querySelector(".filter-input");
+      const dropdown = filterRoot.querySelector(".filter-dropdown");
+      const clearBtn = filterRoot.querySelector(".filter-clear");
+
+      input.addEventListener("focus", () => {
+        renderDailyProjectDropdown(projects, dropdown, input.value);
+        dropdown.hidden = false;
+      });
+      input.addEventListener("input", () => {
+        renderDailyProjectDropdown(projects, dropdown, input.value);
+        dropdown.hidden = false;
+      });
+      if (clearBtn) {
+        clearBtn.addEventListener("click", () => {
+          input.value = "";
+          clearBtn.hidden = true;
+          dailyFilters.cwd = "";
+          dropdown.hidden = true;
+          fetchDailySessions();
+        });
+      }
+      document.addEventListener("click", (e) => {
+        if (!filterRoot.contains(e.target)) dropdown.hidden = true;
+      });
+
+      dropdown.addEventListener("click", (e) => {
+        const opt = e.target.closest(".filter-option");
+        if (!opt) return;
+        const cwd = opt.dataset.cwd;
+        if (dailyFilters.cwd === cwd) {
+          dailyFilters.cwd = "";
+          input.value = "";
+          if (clearBtn) clearBtn.hidden = true;
+        } else {
+          dailyFilters.cwd = cwd;
+          input.value = cwd.split("/").pop();
+          if (clearBtn) clearBtn.hidden = false;
+        }
+        dropdown.hidden = true;
+        fetchDailySessions();
+      });
+    }
+  }
+}
+
+function renderDailyProjectDropdown(projects, dropdown, query) {
+  const q = query.toLowerCase();
+  const filtered = q
+    ? projects.filter((p) => p.name.toLowerCase().includes(q))
+    : projects;
+  dropdown.innerHTML = filtered
+    .map(
+      (p) =>
+        `<button class="filter-option${dailyFilters.cwd === p.name ? " is-active" : ""}" data-cwd="${escapeHTML(p.name)}" type="button">
+          <span>${escapeHTML(p.name.split("/").pop())}</span>
+          <span class="filter-option-count">${p.session_count}</span>
+        </button>`,
+    )
+    .join("");
+}
+
+async function fetchDailySessions() {
+  const list = document.getElementById("daily-sessions-list");
+  const tags = document.getElementById("daily-filter-tags");
+  if (!list) return;
+
+  // Render filter tags
+  if (tags) {
+    let html = "";
+    if (dailyFilters.tool) {
+      const t = dailyFilters.tool;
+      const label = t.startsWith("auto:")
+        ? t.slice("auto:".length)
+        : t.startsWith("agent:")
+          ? t.slice("agent:".length)
+          : t;
+      const cls = t.startsWith("agent:")
+        ? "badge badge-agent"
+        : "badge badge-skill";
+      html += `<span class="${cls}" style="cursor:pointer" data-clear="tool">${escapeHTML(label)} &times;</span>`;
+    }
+    if (dailyFilters.cwd) {
+      html += `<span class="badge" style="cursor:pointer" data-clear="cwd">${escapeHTML(dailyFilters.cwd.split("/").pop())} &times;</span>`;
+    }
+    if (dailyFilters.content) {
+      html += `<span class="badge" style="cursor:pointer" data-clear="content">&ldquo;${escapeHTML(dailyFilters.content)}&rdquo; &times;</span>`;
+    }
+    tags.innerHTML = html;
+    tags.querySelectorAll("[data-clear]").forEach((el) => {
+      el.addEventListener("click", () => {
+        dailyFilters[el.dataset.clear] = "";
+        if (el.dataset.clear === "content") {
+          const si = document.getElementById("daily-search-input");
+          if (si) si.value = "";
+        }
+        if (el.dataset.clear === "cwd") {
+          const fi = document.querySelector(
+            "#daily-project-filter .filter-input",
+          );
+          const fc = document.querySelector(
+            "#daily-project-filter .filter-clear",
+          );
+          if (fi) fi.value = "";
+          if (fc) fc.hidden = true;
+        }
+        fetchDailySessions();
+      });
+    });
+  }
+
+  // If no filters active, show original sessions from stats
+  if (
+    !dailyFilters.tool &&
+    !dailyFilters.cwd &&
+    !dailyFilters.content &&
+    dailyFilters.dir === "desc"
+  ) {
+    const root = document.getElementById("daily-view");
+    const stats = root ? JSON.parse(root.dataset.stats || "{}") : {};
+    const rows = (stats.sessions || []).map((s) => sessionItemHTML(s)).join("");
+    list.innerHTML = rows || '<p class="empty">No sessions</p>';
+    return;
+  }
+
+  list.innerHTML = '<p class="empty">Loading...</p>';
+
+  const params = new URLSearchParams({
+    from: dailyFilters.date + "T00:00:00Z",
+    to: dailyFilters.date + "T23:59:59Z",
+    limit: "100",
+  });
+  if (dailyFilters.tool) params.set("tool", dailyFilters.tool);
+  if (dailyFilters.cwd) params.set("cwd", dailyFilters.cwd);
+  if (dailyFilters.content) params.set("content", dailyFilters.content);
+  if (dailyFilters.dir === "asc") params.set("dir", "asc");
+
+  const res = await fetch(`/api/sessions?${params}`);
+  if (!res.ok) {
+    list.innerHTML = '<p class="empty">Failed to load</p>';
+    return;
+  }
+  const data = await res.json();
+  const rows = (data.items || []).map((s) => sessionItemHTML(s)).join("");
+  list.innerHTML = rows || '<p class="empty">No sessions</p>';
+}
+
+function generateDailyPrompt(stats) {
+  const cost = stats.top_models ? calculateCostFromModels(stats.top_models) : 0;
+
+  const lines = [
+    `# ${stats.date} の Claude Code 使用レポート`,
+    "",
+    `- セッション数: ${stats.total_sessions}`,
+    `- メッセージ数: ${stats.total_messages}`,
+    `- ツール呼び出し: ${stats.total_tool_calls}`,
+    `- 推定コスト: ${formatCost(cost)}`,
+    "",
+  ];
+
+  const allTools = stats.top_tools || [];
+  const isPromptSkill = (t) =>
+    t.name.startsWith("/") || t.name.startsWith("auto:/");
+  const isPromptAgent = (t) => t.name.startsWith("agent:");
+  const promptTools = allTools.filter(
+    (t) => !isPromptSkill(t) && !isPromptAgent(t),
+  );
+  const promptSkills = allTools.filter(isPromptSkill);
+  const promptAgents = allTools.filter(isPromptAgent);
+
+  if (promptTools.length) {
+    lines.push("## ツール使用状況");
+    for (const t of promptTools) {
+      lines.push(`- ${t.name}: ${t.count} 回 (${t.session_count} セッション)`);
+    }
+    lines.push("");
+  }
+
+  if (promptSkills.length) {
+    lines.push("## スキル使用状況");
+    for (const t of promptSkills) {
+      const auto = t.name.startsWith("auto:");
+      const label = auto ? t.name.slice("auto:".length) : t.name;
+      const tag = auto ? " [自動]" : "";
+      lines.push(
+        `- ${label}${tag}: ${t.count} 回 (${t.session_count} セッション)`,
+      );
+    }
+    lines.push("");
+  }
+
+  if (promptAgents.length) {
+    lines.push("## エージェント使用状況");
+    for (const t of promptAgents) {
+      const label = t.name.slice("agent:".length);
+      lines.push(`- ${label}: ${t.count} 回 (${t.session_count} セッション)`);
+    }
+    lines.push("");
+  }
+
+  if (stats.top_models && stats.top_models.length) {
+    lines.push("## モデル使用状況");
+    for (const m of stats.top_models) {
+      const mCost = calculateCostForItem(m);
+      lines.push(
+        `- ${m.name}: ${formatCost(mCost)} (${m.session_count} セッション, out=${formatNumber(m.output_tokens)} tokens)`,
+      );
+    }
+    lines.push("");
+  }
+
+  if (stats.sessions && stats.sessions.length) {
+    lines.push("## セッション一覧");
+    for (const s of stats.sessions) {
+      const project = s.cwd ? s.cwd.split("/").pop() : "-";
+      const sCost = calculateCostForItem(s);
+      const path = s.source_path || "";
+      lines.push(
+        `- [${project}] ${formatCost(sCost)}, ${s.message_count} msgs, branch: ${s.git_branch || "-"} — ${path}`,
+      );
+    }
+    lines.push("");
+  }
+
+  lines.push(
+    "---",
+    "上記の統計データだけで振り返りをしてください。個別セッションの中身を読む必要はありません。",
+    "観点：",
+    "- 生産性: ツール使用パターンと作業効率",
+    "- コスト効率: モデル選択と使用量",
+    "- 改善点: 次回以降の改善案",
+    "",
+    "詳細が必要な場合のみ、上記パスのセッションログを読んでください。",
+  );
+
+  return lines.join("\n");
+}
+
+function copyDailyPrompt(btn) {
+  const root = document.getElementById("daily-view");
+  if (!root || !root.dataset.stats) return;
+
+  const stats = JSON.parse(root.dataset.stats);
+  const prompt = generateDailyPrompt(stats);
+
+  navigator.clipboard.writeText(prompt).then(() => {
+    const original = btn.innerHTML;
+    btn.innerHTML =
+      '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>';
+    btn.classList.add("is-copied");
+    btn.dataset.tooltip = "Copied!";
+    setTimeout(() => {
+      btn.innerHTML = original;
+      btn.classList.remove("is-copied");
+      btn.dataset.tooltip = "Copy prompt";
+    }, 1500);
+  });
 }

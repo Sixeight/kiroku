@@ -1,10 +1,21 @@
 # kiroku
 
-A web dashboard for browsing Claude Code session history.
-
-Parses JSONL transcript files stored under `~/.config/claude/projects/` and provides a Web UI for viewing session lists, token usage, tool usage statistics, and more.
+A web dashboard for browsing Claude Code session history. "Kiroku" (記録) means "record" in Japanese.
 
 ![kiroku screenshot](screenshot.png)
+
+## Why kiroku?
+
+The more you use Claude Code, the harder it gets to answer "how much am I actually using it?" kiroku reads the JSONL transcripts Claude Code already saves locally and turns them into a visual dashboard.
+
+- **Cost awareness** — See token usage and estimated cost at a glance. Catch overuse early
+- **Usage trends** — Daily activity chart shows when and how much you used Claude Code
+- **Cross-project overview** — See how sessions are distributed across projects and branches
+- **Session search** — Filter by project, branch, model, or date range to find past conversations
+- **Agent & skill tracking** — See which Agent subagent types and skills were used in each session
+- **Session resume** — Resume any session you find in the dashboard with a single command
+
+No extra setup required — just install and run `kiroku open`. Everything runs locally with no external services.
 
 ## Installation
 
@@ -70,29 +81,6 @@ Resume a Claude Code session by ID. Runs `claude --resume <session-id>` in the s
 ```
 kiroku resume <session-id>
 ```
-
-## Data Flow
-
-```mermaid
-flowchart TD
-    A["~/.config/claude/projects/**/*.jsonl"] --> B["Indexer<br/>parse & aggregate"]
-    B --> C["~/.cache/kiroku/index.sqlite"]
-    C --> D["Web Server<br/>API + HTML"]
-    D --> E["Browser (localhost:4319)"]
-```
-
-## API Endpoints
-
-| Method | Path | Description |
-|--------|------|-------------|
-| GET | `/` | Dashboard HTML |
-| GET | `/api/summary` | Summary statistics |
-| GET | `/api/sessions` | Session list (cursor pagination) |
-| GET | `/api/sessions/:id` | Session detail |
-| GET | `/api/sessions/:id/messages` | Session messages |
-| GET | `/api/projects/summary?cwd=...` | Per-project statistics |
-| POST | `/api/reindex` | Rebuild the index |
-| GET | `/healthz` | Health check |
 
 ## Build
 

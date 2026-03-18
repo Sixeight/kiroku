@@ -742,6 +742,10 @@ h1 {
   border-bottom: 1px solid var(--panel-border);
 }
 
+.timeline svg rect[data-idx] {
+  cursor: pointer;
+}
+
 .timeline svg rect[data-idx]:hover + rect {
   opacity: 1 !important;
 }
@@ -806,9 +810,21 @@ h1 {
   color: var(--accent);
 }
 
+.badge-skill-auto {
+  background: var(--accent-soft);
+  color: var(--muted);
+  border: 1px dashed var(--panel-border);
+}
+
 .msg-slash-cmd {
   font-weight: 600;
   color: var(--accent);
+}
+
+.badge-agent {
+  background: var(--accent-soft);
+  color: var(--muted);
+  border: 1px solid var(--panel-border);
 }
 
 .badge-hook {
@@ -836,6 +852,26 @@ h1 {
 
 #project-summary {
   margin-bottom: 28px;
+}
+
+/* ── Daily expand ──────────────────────────────────── */
+.daily-expand summary {
+  cursor: pointer;
+  font-size: 0.75rem;
+  color: var(--muted);
+  padding: 6px 12px;
+}
+
+.daily-expand summary:hover {
+  color: var(--accent);
+}
+
+.daily-expand .detail-rows {
+  margin-top: 4px;
+}
+
+.daily-expand summary:hover {
+  color: var(--accent);
 }
 
 /* ── Conversation search ───────────────────────────── */

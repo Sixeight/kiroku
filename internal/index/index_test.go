@@ -724,6 +724,97 @@ func TestReindexCleanPreviewSkipsSystemMessages(t *testing.T) {
 	}
 }
 
+// TestReindexExpandsSkillToolName verifies that tool_use blocks with name "Skill"
+// are stored with the actual skill name (e.g., "Skill:commit") instead of bare "Skill".
+func TestReindexExpandsSkillToolName(t *testing.T) {
+	root := t.TempDir()
+	dbPath := filepath.Join(root, "index.sqlite")
+	projectRoot := filepath.Join(root, "projects")
+
+	if err := os.MkdirAll(projectRoot, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	// Session with a Skill tool_use block that has input.skill
+	payload := `{"sessionId":"session-1","cwd":"/tmp/project","gitBranch":"main","type":"user","message":{"role":"user","content":[{"type":"text","text":"hello"}]},"timestamp":"2026-03-15T10:00:00Z"}
+{"sessionId":"session-1","cwd":"/tmp/project","gitBranch":"main","type":"assistant","message":{"model":"claude-opus-4-6","role":"assistant","usage":{"input_tokens":5,"output_tokens":3,"cache_read_input_tokens":0,"cache_creation_input_tokens":0},"content":[{"type":"tool_use","name":"Skill","id":"tool-1","input":{"skill":"commit"}},{"type":"tool_use","name":"Skill","id":"tool-2","input":{"skill":"review"}},{"type":"tool_use","name":"Skill","id":"tool-3","input":{"skill":"commit"}}]},"timestamp":"2026-03-15T10:00:01Z"}
+`
+
+	logPath := filepath.Join(projectRoot, "session.jsonl")
+	if err := os.WriteFile(logPath, []byte(payload), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	idx, err := index.Open(dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer idx.Close()
+
+	if _, err := idx.Reindex(context.Background(), []string{projectRoot}, false); err != nil {
+		t.Fatal(err)
+	}
+
+	// Auto-triggered skills should be stored with "auto:" prefix
+	if got, want := toolCount(t, dbPath, "session-1", "auto:/commit"), 2; got != want {
+		t.Fatalf("auto:/commit count = %d, want %d", got, want)
+	}
+	if got, want := toolCount(t, dbPath, "session-1", "auto:/review"), 1; got != want {
+		t.Fatalf("auto:/review count = %d, want %d", got, want)
+	}
+
+	// Bare "Skill" should NOT exist
+	db := openDB(t, dbPath)
+	defer db.Close()
+
+	var bareCount int
+	err = db.QueryRow(
+		`SELECT COALESCE(SUM(count), 0) FROM session_tools WHERE session_id = ? AND tool_name = 'Skill'`,
+		"session-1",
+	).Scan(&bareCount)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bareCount != 0 {
+		t.Fatalf("bare 'Skill' count = %d, want 0", bareCount)
+	}
+}
+
+// TestReindexCountsUserMessageSkills verifies that user messages with
+// <command-name> tags (slash command invocations) are counted in session_tools.
+func TestReindexCountsUserMessageSkills(t *testing.T) {
+	root := t.TempDir()
+	dbPath := filepath.Join(root, "index.sqlite")
+	projectRoot := filepath.Join(root, "projects")
+
+	if err := os.MkdirAll(projectRoot, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	payload := `{"sessionId":"session-1","cwd":"/tmp/project","gitBranch":"main","type":"user","message":{"role":"user","content":"<command-message>fix-pr-comments</command-message>\n<command-name>/fix-pr-comments</command-name>"},"timestamp":"2026-03-15T10:00:00Z"}
+{"sessionId":"session-1","cwd":"/tmp/project","gitBranch":"main","type":"assistant","message":{"model":"claude-opus-4-6","role":"assistant","usage":{"input_tokens":5,"output_tokens":3,"cache_read_input_tokens":0,"cache_creation_input_tokens":0},"content":[{"type":"text","text":"ok"}]},"timestamp":"2026-03-15T10:00:01Z"}
+`
+
+	logPath := filepath.Join(projectRoot, "session.jsonl")
+	if err := os.WriteFile(logPath, []byte(payload), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	idx, err := index.Open(dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer idx.Close()
+
+	if _, err := idx.Reindex(context.Background(), []string{projectRoot}, false); err != nil {
+		t.Fatal(err)
+	}
+
+	if got, want := toolCount(t, dbPath, "session-1", "/fix-pr-comments"), 1; got != want {
+		t.Fatalf("/fix-pr-comments count = %d, want %d", got, want)
+	}
+}
+
 // TestReindexCountsLocalCommandSkills verifies that local_command system
 // records (manually triggered skills like /commit) are counted in session_tools.
 func TestReindexCountsLocalCommandSkills(t *testing.T) {
@@ -772,6 +863,63 @@ func TestReindexCountsLocalCommandSkills(t *testing.T) {
 	// validSessionLog has 1 Bash tool_use; local_command should not add to tool_call_count.
 	if got, want := toolCallCount, 1; got != want {
 		t.Fatalf("tool_call_count = %d, want %d (local_command should not increment)", got, want)
+	}
+}
+
+// TestReindexExpandsAgentToolName verifies that tool_use blocks with name "Agent"
+// are stored with the subagent_type (e.g., "agent:Explore") or description as fallback.
+func TestReindexExpandsAgentToolName(t *testing.T) {
+	root := t.TempDir()
+	dbPath := filepath.Join(root, "index.sqlite")
+	projectRoot := filepath.Join(root, "projects")
+
+	if err := os.MkdirAll(projectRoot, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	payload := `{"sessionId":"session-1","cwd":"/tmp/project","gitBranch":"main","type":"user","message":{"role":"user","content":[{"type":"text","text":"hello"}]},"timestamp":"2026-03-15T10:00:00Z"}
+{"sessionId":"session-1","cwd":"/tmp/project","gitBranch":"main","type":"assistant","message":{"model":"claude-opus-4-6","role":"assistant","usage":{"input_tokens":5,"output_tokens":3,"cache_read_input_tokens":0,"cache_creation_input_tokens":0},"content":[{"type":"tool_use","name":"Agent","id":"tool-1","input":{"subagent_type":"Explore","description":"Search codebase","prompt":"find files"}},{"type":"tool_use","name":"Agent","id":"tool-2","input":{"subagent_type":"Explore","description":"Another search","prompt":"find more"}},{"type":"tool_use","name":"Agent","id":"tool-3","input":{"description":"Quick task","prompt":"do something"}}]},"timestamp":"2026-03-15T10:00:01Z"}
+`
+
+	logPath := filepath.Join(projectRoot, "session.jsonl")
+	if err := os.WriteFile(logPath, []byte(payload), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	idx, err := index.Open(dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer idx.Close()
+
+	if _, err := idx.Reindex(context.Background(), []string{projectRoot}, false); err != nil {
+		t.Fatal(err)
+	}
+
+	// Agent with subagent_type "Explore" should be stored as "agent:Explore"
+	if got, want := toolCount(t, dbPath, "session-1", "agent:Explore"), 2; got != want {
+		t.Fatalf("agent:Explore count = %d, want %d", got, want)
+	}
+
+	// Agent without subagent_type should fall back to description
+	if got, want := toolCount(t, dbPath, "session-1", "agent:Quick task"), 1; got != want {
+		t.Fatalf("agent:Quick task count = %d, want %d", got, want)
+	}
+
+	// Bare "Agent" should NOT exist
+	db := openDB(t, dbPath)
+	defer db.Close()
+
+	var bareCount int
+	err = db.QueryRow(
+		`SELECT COALESCE(SUM(count), 0) FROM session_tools WHERE session_id = ? AND tool_name = 'Agent'`,
+		"session-1",
+	).Scan(&bareCount)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bareCount != 0 {
+		t.Fatalf("bare 'Agent' count = %d, want 0", bareCount)
 	}
 }
 

@@ -65,6 +65,7 @@ type RecentSessionSummary struct {
 	CacheReadTokens  int         `json:"cache_read_tokens"`
 	CacheWriteTokens int         `json:"cache_write_tokens"`
 	PrimaryModel     string      `json:"primary_model"`
+	SourcePath       string      `json:"source_path,omitempty"`
 	PRs              []SessionPR `json:"prs,omitempty"`
 }
 
@@ -149,6 +150,20 @@ type ProjectStats struct {
 	TopTools         []ToolAggregate  `json:"top_tools"`
 	TopModels        []ModelAggregate `json:"top_models"`
 	Branches         []BranchSummary  `json:"branches"`
+}
+
+type DailyStats struct {
+	Date             string                 `json:"date"`
+	TotalSessions    int                    `json:"total_sessions"`
+	TotalMessages    int                    `json:"total_messages"`
+	TotalToolCalls   int                    `json:"total_tool_calls"`
+	InputTokens      int                    `json:"input_tokens"`
+	OutputTokens     int                    `json:"output_tokens"`
+	CacheReadTokens  int                    `json:"cache_read_tokens"`
+	CacheWriteTokens int                    `json:"cache_write_tokens"`
+	TopTools         []ToolAggregate        `json:"top_tools"`
+	TopModels        []ModelAggregate       `json:"top_models"`
+	Sessions         []RecentSessionSummary `json:"sessions"`
 }
 
 type ConversationMessage struct {

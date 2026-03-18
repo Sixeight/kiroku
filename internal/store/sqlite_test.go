@@ -1165,6 +1165,99 @@ func TestSQLiteStoreListSessionsCWDFilterIncludesWorktrees(t *testing.T) {
 	}
 }
 
+func TestSQLiteStoreListSessionsFiltersByTool(t *testing.T) {
+	// session-1: tools = Bash, Read
+	// session-2: tools = Read
+	// session-3: no tools (only text)
+	reader := setupStore(t, map[string]string{
+		"one.jsonl":   sessionOneLog(),
+		"two.jsonl":   sessionTwoLog(),
+		"three.jsonl": sessionThreeLog(),
+	})
+
+	// Filter by "Read" → session-1 and session-2
+	sessions, _, err := reader.ListSessions(context.Background(), store.ListSessionsParams{
+		Limit: 10,
+		Tool:  "Read",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := len(sessions), 2; got != want {
+		t.Fatalf("sessions len = %d, want %d", got, want)
+	}
+
+	// Filter by "Bash" → session-1 only
+	sessions2, _, err := reader.ListSessions(context.Background(), store.ListSessionsParams{
+		Limit: 10,
+		Tool:  "Bash",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := len(sessions2), 1; got != want {
+		t.Fatalf("sessions len = %d, want %d", got, want)
+	}
+	if got, want := sessions2[0].SessionID, "session-1"; got != want {
+		t.Fatalf("session id = %q, want %q", got, want)
+	}
+}
+
+func TestSQLiteStoreReturnsDailyStats(t *testing.T) {
+	reader := setupStore(t, map[string]string{
+		"one.jsonl":   sessionOneLog(),
+		"two.jsonl":   sessionTwoLog(),
+		"three.jsonl": sessionThreeLog(),
+	})
+
+	stats, err := reader.GetDailyStats(context.Background(), "2026-03-15")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if got, want := stats.Date, "2026-03-15"; got != want {
+		t.Fatalf("date = %q, want %q", got, want)
+	}
+
+	if got, want := stats.TotalSessions, 3; got != want {
+		t.Fatalf("total sessions = %d, want %d", got, want)
+	}
+
+	if got, want := stats.TotalToolCalls, 3; got != want {
+		t.Fatalf("total tool calls = %d, want %d", got, want)
+	}
+
+	// session-1: input=12, output=9; session-2: input=10, output=5; session-3: input=7, output=4
+	// sidechain (session-1): input=2, output=1 -- but sidechain uses different model, counted in session_models
+	if got, want := stats.OutputTokens, 19; got != want {
+		t.Fatalf("output tokens = %d, want %d", got, want)
+	}
+
+	if len(stats.TopTools) == 0 {
+		t.Fatal("expected at least one tool in TopTools")
+	}
+	if got, want := stats.TopTools[0].Name, "Read"; got != want {
+		t.Fatalf("top tool = %q, want %q", got, want)
+	}
+
+	if len(stats.TopModels) == 0 {
+		t.Fatal("expected at least one model in TopModels")
+	}
+
+	if got, want := len(stats.Sessions), 3; got != want {
+		t.Fatalf("sessions len = %d, want %d", got, want)
+	}
+
+	// Empty date should return zero stats
+	empty, err := reader.GetDailyStats(context.Background(), "2099-01-01")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if empty.TotalSessions != 0 {
+		t.Fatalf("expected 0 sessions for empty date, got %d", empty.TotalSessions)
+	}
+}
+
 func sessionThreeLog() string {
 	return `{"sessionId":"session-3","cwd":"/tmp/project-search","gitBranch":"feature/search","type":"user","message":{"role":"user","content":[{"type":"text","text":"other work"}]},"timestamp":"2026-03-15T09:00:00Z"}
 {"sessionId":"session-3","cwd":"/tmp/project-search","gitBranch":"feature/search","type":"assistant","message":{"model":"claude-opus-4-6","role":"assistant","usage":{"input_tokens":7,"output_tokens":4,"cache_read_input_tokens":2,"cache_creation_input_tokens":1},"content":[{"type":"text","text":"done"}]},"timestamp":"2026-03-15T09:00:01Z"}
