@@ -833,6 +833,44 @@ h1 {
   border: 1px dashed var(--panel-border);
 }
 
+/* ── Hooks section ─────────────────────────────────── */
+.hooks-bar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.hook-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px 4px 8px;
+  border-radius: 999px;
+  background: var(--surface-dim);
+  border: 1px solid var(--panel-border);
+  font-size: 0.75rem;
+}
+
+.hook-event {
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 0.7rem;
+  color: var(--muted);
+}
+
+.hook-count {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  border-radius: 999px;
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-size: 0.65rem;
+  font-weight: 600;
+}
+
 .badge-pr {
   text-decoration: none;
   cursor: pointer;

@@ -923,6 +923,67 @@ func TestReindexExpandsAgentToolName(t *testing.T) {
 	}
 }
 
+// TestReindexIndexesHookProgress verifies that "progress" records with
+// data.type "hook_progress" are stored in the session_hooks table.
+func TestReindexIndexesHookProgress(t *testing.T) {
+	root := t.TempDir()
+	dbPath := filepath.Join(root, "index.sqlite")
+	projectRoot := filepath.Join(root, "projects")
+
+	if err := os.MkdirAll(projectRoot, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	payload := validSessionLog() +
+		`{"type":"progress","data":{"type":"hook_progress","hookEvent":"PreToolUse","hookName":"PreToolUse:Bash","command":"~/.config/claude/hooks/validate.sh"},"sessionId":"session-1","timestamp":"2026-03-15T10:00:05Z"}` + "\n" +
+		`{"type":"progress","data":{"type":"hook_progress","hookEvent":"PreToolUse","hookName":"PreToolUse:Bash","command":"~/.config/claude/hooks/validate.sh"},"sessionId":"session-1","timestamp":"2026-03-15T10:00:06Z"}` + "\n" +
+		`{"type":"progress","data":{"type":"hook_progress","hookEvent":"PostToolUse","hookName":"PostToolUse:Bash","command":"callback"},"sessionId":"session-1","timestamp":"2026-03-15T10:00:07Z"}` + "\n" +
+		`{"type":"progress","data":{"type":"hook_progress","hookEvent":"UserPromptSubmit","hookName":"UserPromptSubmit","command":"~/.config/claude/hooks/prompt-check.sh"},"sessionId":"session-1","timestamp":"2026-03-15T10:00:08Z"}` + "\n"
+
+	logPath := filepath.Join(projectRoot, "session.jsonl")
+	if err := os.WriteFile(logPath, []byte(payload), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	idx, err := index.Open(dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer idx.Close()
+
+	if _, err := idx.Reindex(context.Background(), []string{projectRoot}, false); err != nil {
+		t.Fatal(err)
+	}
+
+	if got, want := hookCount(t, dbPath, "session-1", "PreToolUse"), 2; got != want {
+		t.Fatalf("PreToolUse hook count = %d, want %d", got, want)
+	}
+	if got, want := hookCount(t, dbPath, "session-1", "PostToolUse"), 1; got != want {
+		t.Fatalf("PostToolUse hook count = %d, want %d", got, want)
+	}
+	if got, want := hookCount(t, dbPath, "session-1", "UserPromptSubmit"), 1; got != want {
+		t.Fatalf("UserPromptSubmit hook count = %d, want %d", got, want)
+	}
+}
+
+func hookCount(t *testing.T, dbPath, sessionID, hookEvent string) int {
+	t.Helper()
+
+	db := openDB(t, dbPath)
+	defer db.Close()
+
+	var count int
+	if err := db.QueryRow(
+		`SELECT count FROM session_hooks WHERE session_id = ? AND hook_event = ?`,
+		sessionID,
+		hookEvent,
+	).Scan(&count); err != nil {
+		t.Fatal(err)
+	}
+
+	return count
+}
+
 // TestReindexContextCancellation verifies that passing a cancelled context
 // to Reindex returns ctx.Err() promptly without processing all files.
 func TestReindexContextCancellation(t *testing.T) {

@@ -48,6 +48,7 @@ type sessionAggregate struct {
 	SourcePath            string
 	SourceMTime           int64
 	ToolCounts            map[string]int
+	HookCounts            map[string]int
 	ModelUsage            map[string]modelAggregate
 	PRLinks               []prLink
 	seenSubagents         map[string]struct{}
@@ -79,9 +80,15 @@ type transcriptRecord struct {
 	Timestamp     string          `json:"timestamp"`
 	SystemContent string          `json:"content"`
 	Message       *messagePayload `json:"message"`
+	Data          *progressData   `json:"data"`
 	PRNumber      int             `json:"prNumber"`
 	PRUrl         string          `json:"prUrl"`
 	PRRepository  string          `json:"prRepository"`
+}
+
+type progressData struct {
+	Type      string `json:"type"`
+	HookEvent string `json:"hookEvent"`
 }
 
 type messagePayload struct {
@@ -130,7 +137,7 @@ func (i *Indexer) Close() error {
 
 func (i *Indexer) Reindex(ctx context.Context, roots []string, full bool) (Report, error) {
 	if full {
-		if _, err := i.db.ExecContext(ctx, `DELETE FROM session_models; DELETE FROM session_tools; DELETE FROM session_prs; DELETE FROM session_content_fts; DELETE FROM sessions; DELETE FROM files;`); err != nil {
+		if _, err := i.db.ExecContext(ctx, `DELETE FROM session_models; DELETE FROM session_tools; DELETE FROM session_hooks; DELETE FROM session_prs; DELETE FROM session_content_fts; DELETE FROM sessions; DELETE FROM files;`); err != nil {
 			return Report{}, err
 		}
 	}
@@ -219,6 +226,13 @@ CREATE TABLE IF NOT EXISTS files(
   size INTEGER,
   mtime INTEGER,
   last_indexed_at TEXT
+);
+
+CREATE TABLE IF NOT EXISTS session_hooks(
+  session_id TEXT,
+  hook_event TEXT,
+  count INTEGER,
+  PRIMARY KEY(session_id, hook_event)
 );
 
 CREATE VIRTUAL TABLE IF NOT EXISTS session_content_fts USING fts5(
@@ -344,6 +358,7 @@ func getOrCreateSession(sessions map[string]*sessionAggregate, state fileState, 
 			SourcePath:    state.Path,
 			SourceMTime:   state.MTime,
 			ToolCounts:    map[string]int{},
+			HookCounts:    map[string]int{},
 			ModelUsage:    map[string]modelAggregate{},
 			seenSubagents: map[string]struct{}{},
 			seenPRs:       map[int]struct{}{},
@@ -368,6 +383,13 @@ func aggregateRecord(sessions map[string]*sessionAggregate, state fileState, rec
 				PRRepository: record.PRRepository,
 			})
 		}
+		return
+	}
+
+	if record.Type == "progress" && record.Data != nil && record.Data.Type == "hook_progress" && record.Data.HookEvent != "" {
+		session := getOrCreateSession(sessions, state, record)
+		updateBounds(session, record.Timestamp)
+		session.HookCounts[record.Data.HookEvent]++
 		return
 	}
 
@@ -566,6 +588,9 @@ func (i *Indexer) replaceFileSessions(ctx context.Context, state fileState, sess
 		if _, err = tx.ExecContext(ctx, `DELETE FROM session_prs WHERE session_id = ?`, sessionID); err != nil {
 			return err
 		}
+		if _, err = tx.ExecContext(ctx, `DELETE FROM session_hooks WHERE session_id = ?`, sessionID); err != nil {
+			return err
+		}
 		if _, err = tx.ExecContext(ctx, `DELETE FROM session_content_fts WHERE session_id = ?`, sessionID); err != nil {
 			return err
 		}
@@ -661,6 +686,19 @@ func (i *Indexer) replaceFileSessions(ctx context.Context, state fileState, sess
 				`INSERT INTO session_content_fts(session_id, content) VALUES (?, ?)`,
 				session.SessionID,
 				content,
+			); err != nil {
+				return err
+			}
+		}
+
+		for hookEvent, count := range session.HookCounts {
+			if _, err = tx.ExecContext(
+				ctx,
+				`INSERT INTO session_hooks(session_id, hook_event, count) VALUES (?, ?, ?)
+				 ON CONFLICT(session_id, hook_event) DO UPDATE SET count = excluded.count`,
+				session.SessionID,
+				hookEvent,
+				count,
 			); err != nil {
 				return err
 			}

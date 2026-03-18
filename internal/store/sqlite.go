@@ -48,18 +48,18 @@ type ListSessionsParams struct {
 	Dir     string
 }
 
-type SessionPR struct {
-	PRNumber     int    `json:"pr_number"`
-	PRUrl        string `json:"pr_url"`
-	PRRepository string `json:"pr_repository"`
-}
-
 type SessionDetail struct {
 	Meta           SessionMeta    `json:"meta"`
 	Models         []SessionModel `json:"models"`
 	Tools          []SessionTool  `json:"tools"`
+	Hooks          []SessionHook  `json:"hooks"`
 	PRs            []SessionPR    `json:"prs"`
 	TimelineCounts TimelineCounts `json:"timeline_counts"`
+}
+
+type SessionHook struct {
+	HookEvent string `json:"hook_event"`
+	Count     int    `json:"count"`
 }
 
 type SessionModel struct {
@@ -237,6 +237,29 @@ func (s *SQLiteStore) analytics(ctx context.Context, modelUsage map[string]Model
 		analytics.TopModels = append(analytics.TopModels, item)
 	}
 	if err := modelRows.Err(); err != nil {
+		return Analytics{}, err
+	}
+
+	hookRows, err := s.db.QueryContext(
+		ctx,
+		`SELECT hook_event, COALESCE(SUM(count), 0), COUNT(*)
+		   FROM session_hooks
+		  GROUP BY hook_event
+		  ORDER BY SUM(count) DESC, hook_event ASC`,
+	)
+	if err != nil {
+		return Analytics{}, err
+	}
+	defer hookRows.Close()
+
+	for hookRows.Next() {
+		var item HookAggregate
+		if err := hookRows.Scan(&item.Event, &item.Count, &item.SessionCount); err != nil {
+			return Analytics{}, err
+		}
+		analytics.TopHooks = append(analytics.TopHooks, item)
+	}
+	if err := hookRows.Err(); err != nil {
 		return Analytics{}, err
 	}
 
@@ -669,6 +692,30 @@ func (s *SQLiteStore) GetSession(ctx context.Context, sessionID string) (Session
 		detail.Tools = append(detail.Tools, tool)
 	}
 	if err := toolRows.Err(); err != nil {
+		return SessionDetail{}, err
+	}
+
+	hookRows, err := s.db.QueryContext(
+		ctx,
+		`SELECT hook_event, count
+		 FROM session_hooks
+		 WHERE session_id = ?
+		 ORDER BY count DESC, hook_event ASC`,
+		sessionID,
+	)
+	if err != nil {
+		return SessionDetail{}, err
+	}
+	defer hookRows.Close()
+
+	for hookRows.Next() {
+		var hook SessionHook
+		if err := hookRows.Scan(&hook.HookEvent, &hook.Count); err != nil {
+			return SessionDetail{}, err
+		}
+		detail.Hooks = append(detail.Hooks, hook)
+	}
+	if err := hookRows.Err(); err != nil {
 		return SessionDetail{}, err
 	}
 
@@ -1273,6 +1320,27 @@ func (s *SQLiteStore) GetDailyStats(ctx context.Context, date string) (DailyStat
 		stats.TopModels = append(stats.TopModels, m)
 	}
 	if err := modelRows.Err(); err != nil {
+		return DailyStats{}, err
+	}
+
+	hookRows, err := s.db.QueryContext(ctx,
+		`SELECT sh.hook_event, SUM(sh.count) AS total, COUNT(DISTINCT sh.session_id)
+		 FROM session_hooks sh JOIN sessions s ON sh.session_id = s.session_id
+		 WHERE substr(s.started_at, 1, 10) = ?
+		 GROUP BY sh.hook_event
+		 ORDER BY total DESC, sh.hook_event ASC`, date)
+	if err != nil {
+		return DailyStats{}, err
+	}
+	defer hookRows.Close()
+	for hookRows.Next() {
+		var h HookAggregate
+		if err := hookRows.Scan(&h.Event, &h.Count, &h.SessionCount); err != nil {
+			return DailyStats{}, err
+		}
+		stats.TopHooks = append(stats.TopHooks, h)
+	}
+	if err := hookRows.Err(); err != nil {
 		return DailyStats{}, err
 	}
 

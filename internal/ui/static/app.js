@@ -722,6 +722,7 @@ function renderSessionDetail(detail, messages, hasMore) {
   const meta = detail.meta || {};
   const timeline = detail.timeline_counts || {};
   const tools = detail.tools || [];
+  const hooks = detail.hooks || [];
   const models = detail.models || [];
   const totalCost = calculateCostFromModels(models);
 
@@ -770,6 +771,8 @@ function renderSessionDetail(detail, messages, hasMore) {
         </div>
       </div>
     </div>
+
+    ${hooks.length ? `<div class="detail-section hooks-section"><h3>Hooks</h3><div class="hooks-bar">${hooks.map((h) => `<div class="hook-pill"><span class="hook-event">${escapeHTML(h.hook_event)}</span><span class="hook-count">${h.count}</span></div>`).join("")}</div></div>` : ""}
 
     ${renderSessionMeta(messages)}
 
@@ -1431,6 +1434,7 @@ function renderDailyStats(stats) {
 
     ${skillBadges ? `<div class="detail-section" style="margin-top: 16px"><h3>Skills</h3><div class="badge-row">${skillBadges}</div></div>` : ""}
     ${agentBadges ? `<div class="detail-section" style="margin-top: 16px"><h3>Agents</h3><div class="badge-row">${agentBadges}</div></div>` : ""}
+    ${(stats.top_hooks || []).length ? `<div class="detail-section hooks-section" style="margin-top: 16px"><h3>Hooks</h3><div class="hooks-bar">${(stats.top_hooks || []).map((h) => `<div class="hook-pill"><span class="hook-event">${escapeHTML(h.event)}</span><span class="hook-count">${h.count}</span></div>`).join("")}</div></div>` : ""}
 
     <div class="detail-section" style="margin-top: 24px">
       <h3 id="daily-sessions-heading">Sessions
@@ -1760,6 +1764,14 @@ function generateDailyPrompt(stats) {
     for (const t of promptAgents) {
       const label = t.name.slice("agent:".length);
       lines.push(`- ${label}: ${t.count} 回 (${t.session_count} セッション)`);
+    }
+    lines.push("");
+  }
+
+  if (stats.top_hooks && stats.top_hooks.length) {
+    lines.push("## フック発火状況");
+    for (const h of stats.top_hooks) {
+      lines.push(`- ${h.event}: ${h.count} 回 (${h.session_count} セッション)`);
     }
     lines.push("");
   }

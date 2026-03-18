@@ -107,6 +107,7 @@ type Analytics struct {
 	AverageMessages       float64          `json:"average_messages"`
 	TopTools              []ToolAggregate  `json:"top_tools,omitempty"`
 	TopModels             []ModelAggregate `json:"top_models,omitempty"`
+	TopHooks              []HookAggregate  `json:"top_hooks,omitempty"`
 	LongestSessions       []SessionInsight `json:"longest_sessions,omitempty"`
 	BusiestSessions       []SessionInsight `json:"busiest_sessions,omitempty"`
 }
@@ -124,6 +125,18 @@ type ModelAggregate struct {
 	OutputTokens     int    `json:"output_tokens"`
 	CacheReadTokens  int    `json:"cache_read_tokens"`
 	CacheWriteTokens int    `json:"cache_write_tokens"`
+}
+
+type HookAggregate struct {
+	Event        string `json:"event"`
+	Count        int    `json:"count"`
+	SessionCount int    `json:"session_count"`
+}
+
+type SessionPR struct {
+	PRNumber     int    `json:"pr_number"`
+	PRUrl        string `json:"pr_url"`
+	PRRepository string `json:"pr_repository"`
 }
 
 type SessionInsight struct {
@@ -163,6 +176,7 @@ type DailyStats struct {
 	CacheWriteTokens int                    `json:"cache_write_tokens"`
 	TopTools         []ToolAggregate        `json:"top_tools"`
 	TopModels        []ModelAggregate       `json:"top_models"`
+	TopHooks         []HookAggregate        `json:"top_hooks"`
 	Sessions         []RecentSessionSummary `json:"sessions"`
 }
 
