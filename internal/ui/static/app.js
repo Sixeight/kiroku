@@ -895,6 +895,155 @@ function renderMessageTimeline(events, meta) {
   `;
 }
 
+function renderDailyTimelinePlaceholder() {
+  return `
+    <div class="detail-section" id="daily-timeline-section">
+      <h3>Timeline</h3>
+      <div class="tl-container">
+        <p class="empty">Loading...</p>
+      </div>
+    </div>
+  `;
+}
+
+async function loadDailyTimeline(sessions) {
+  const section = document.getElementById("daily-timeline-section");
+  if (!section || !sessions || !sessions.length) {
+    if (section) section.remove();
+    return;
+  }
+
+  // Find time range from sessions
+  let minT = Infinity;
+  let maxT = -Infinity;
+  for (const s of sessions) {
+    const st = +new Date(s.started_at);
+    const et = +new Date(s.ended_at || s.started_at);
+    if (st < minT) minT = st;
+    if (et > maxT) maxT = et;
+  }
+  if (maxT <= minT) {
+    section.remove();
+    return;
+  }
+
+  // Fetch timeline_events for all sessions in parallel
+  const results = await Promise.all(
+    sessions.map(async (s) => {
+      const res = await fetch(
+        `/api/sessions/${encodeURIComponent(s.session_id)}`,
+      );
+      if (!res.ok) return { session: s, events: [] };
+      const detail = await res.json();
+      return { session: s, events: detail.timeline_events || [] };
+    }),
+  );
+
+  // Assign rows (same as before, by session start time)
+  const ROW_H = 20;
+  const GAP = 3;
+
+  const sorted = results
+    .map((r) => ({
+      ...r,
+      start: new Date(r.session.started_at),
+      end: new Date(r.session.ended_at || r.session.started_at),
+    }))
+    .sort((a, b) => a.start - b.start);
+
+  const rowEnds = [];
+  for (const item of sorted) {
+    let placed = false;
+    for (let r = 0; r < rowEnds.length; r++) {
+      if (item.start >= rowEnds[r]) {
+        rowEnds[r] = item.end;
+        item.row = r;
+        placed = true;
+        break;
+      }
+    }
+    if (!placed) {
+      item.row = rowEnds.length;
+      rowEnds.push(item.end);
+    }
+  }
+
+  const totalRows = rowEnds.length;
+  const trackH = totalRows * ROW_H + (totalRows - 1) * GAP;
+
+  const pad = (maxT - minT) * 0.03;
+  const tStart = minT - pad;
+  const tEnd = maxT + pad;
+  const duration = tEnd - tStart;
+
+  let html = "";
+  for (const item of sorted) {
+    const leftPct = ((item.start - tStart) / duration) * 100;
+    const widthPct = Math.max(((item.end - item.start) / duration) * 100, 0.3);
+    const top = item.row * (ROW_H + GAP);
+
+    // Session bar (background)
+    const preview = escapeHTML(
+      cleanUserText(item.session.preview || "").slice(0, 40),
+    );
+    const sTime = item.start.toLocaleTimeString("en-US", {
+      hour: "2-digit",
+      minute: "2-digit",
+    });
+    const eTime = item.end.toLocaleTimeString("en-US", {
+      hour: "2-digit",
+      minute: "2-digit",
+    });
+    const barTitle = `${sTime} - ${eTime}${preview ? " | " + preview : ""}`;
+    html += `<a href="#/sessions/${encodeURIComponent(item.session.session_id)}" class="dtl-bar" style="left:${leftPct}%;width:${widthPct}%;top:${top}px;height:${ROW_H}px" title="${barTitle}" onclick="prevView=location.hash"></a>`;
+
+    // Message markers within session bar
+    const sessionDuration = item.end - item.start;
+    if (sessionDuration > 0 && item.events.length) {
+      for (const ev of item.events) {
+        const t = +new Date(ev.timestamp);
+        const evPct = ((t - tStart) / duration) * 100;
+        const isUser = ev.role === "user";
+        const markerTop = top + (isUser ? 1 : ROW_H - 4);
+        const cls = isUser
+          ? "dtl-marker dtl-marker-user"
+          : "dtl-marker dtl-marker-assistant";
+        const time = new Date(ev.timestamp).toLocaleTimeString("en-US", {
+          hour: "2-digit",
+          minute: "2-digit",
+          second: "2-digit",
+        });
+        const label = isUser ? "You" : "Claude";
+        html += `<div class="${cls}" style="left:${evPct}%;top:${markerTop}px" title="${label} ${time}"></div>`;
+      }
+    }
+  }
+
+  const startLabel = new Date(minT).toLocaleTimeString("en-US", {
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+  const endLabel = new Date(maxT).toLocaleTimeString("en-US", {
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+
+  const container = section.querySelector(".tl-container");
+  container.innerHTML = `
+    <div class="tl-labels">
+      <span>${startLabel}</span>
+      <span>${endLabel}</span>
+    </div>
+    <div class="dtl-track" style="height:${trackH}px">
+      ${html}
+    </div>
+    <div class="tl-legend">
+      <span class="tl-legend-item"><span class="tl-dot tl-dot-user"></span>You</span>
+      <span class="tl-legend-item"><span class="tl-dot tl-dot-assistant"></span>Claude</span>
+    </div>
+  `;
+}
+
 // ── Conversation view ───────────────────────────────
 
 function renderSessionMeta(messages) {
@@ -1414,6 +1563,7 @@ async function loadDailyStats(date) {
 
   const stats = await res.json();
   renderDailyStats(stats);
+  loadDailyTimeline(stats.sessions || []);
 }
 
 function renderDailyStats(stats) {
@@ -1492,6 +1642,8 @@ function renderDailyStats(stats) {
       <div class="detail-stat"><span>Tool Calls</span><strong>${formatNumber(stats.total_tool_calls)}</strong></div>
       <div class="detail-stat"><span>Est. Cost</span><strong>${formatCost(cost)}</strong></div>
     </div>
+
+    ${renderDailyTimelinePlaceholder()}
 
     <div class="detail-grid">
       <div class="detail-section">

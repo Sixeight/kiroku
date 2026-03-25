@@ -1321,6 +1321,44 @@ h1 {
   background: var(--muted);
 }
 
+/* ── Daily timeline ────────────────────────────────── */
+.dtl-track {
+  position: relative;
+  min-height: 10px;
+}
+
+.dtl-bar {
+  position: absolute;
+  border-radius: 4px;
+  background: var(--accent-soft);
+  display: block;
+  text-decoration: none;
+  transition: background 120ms ease;
+}
+
+.dtl-bar:hover {
+  background: var(--accent-hover);
+}
+
+.dtl-marker {
+  position: absolute;
+  width: 2px;
+  height: 3px;
+  border-radius: 1px;
+  transform: translateX(-50%);
+  pointer-events: none;
+}
+
+.dtl-marker-user {
+  background: var(--accent);
+  opacity: 0.9;
+}
+
+.dtl-marker-assistant {
+  background: var(--muted);
+  opacity: 0.6;
+}
+
 /* ── Responsive ─────────────────────────────────────── */
 @media (max-width: 640px) {
   .page {
