@@ -49,12 +49,18 @@ type ListSessionsParams struct {
 }
 
 type SessionDetail struct {
-	Meta           SessionMeta    `json:"meta"`
-	Models         []SessionModel `json:"models"`
-	Tools          []SessionTool  `json:"tools"`
-	Hooks          []SessionHook  `json:"hooks"`
-	PRs            []SessionPR    `json:"prs"`
-	TimelineCounts TimelineCounts `json:"timeline_counts"`
+	Meta           SessionMeta     `json:"meta"`
+	Models         []SessionModel  `json:"models"`
+	Tools          []SessionTool   `json:"tools"`
+	Hooks          []SessionHook   `json:"hooks"`
+	PRs            []SessionPR     `json:"prs"`
+	TimelineCounts TimelineCounts  `json:"timeline_counts"`
+	TimelineEvents []TimelineEvent `json:"timeline_events"`
+}
+
+type TimelineEvent struct {
+	Role      string `json:"role"`
+	Timestamp string `json:"timestamp"`
 }
 
 type SessionHook struct {
@@ -85,8 +91,10 @@ type TimelineCounts struct {
 }
 
 type transcriptDetailRecord struct {
-	SessionID string `json:"sessionId"`
-	Message   *struct {
+	SessionID   string `json:"sessionId"`
+	IsSidechain bool   `json:"isSidechain"`
+	Timestamp   string `json:"timestamp"`
+	Message     *struct {
 		Role    string          `json:"role"`
 		Content json.RawMessage `json:"content"`
 	} `json:"message"`
@@ -725,7 +733,7 @@ func (s *SQLiteStore) GetSession(ctx context.Context, sessionID string) (Session
 		return SessionDetail{}, err
 	}
 
-	detail.TimelineCounts, err = readTimelineCounts(sourcePath, sessionID)
+	detail.TimelineCounts, detail.TimelineEvents, err = readTimelineCounts(sourcePath, sessionID)
 	if err != nil {
 		return SessionDetail{}, err
 	}
@@ -878,12 +886,20 @@ func (s *SQLiteStore) topBranches(ctx context.Context, limit int) ([]BranchSumma
 	return result, rows.Err()
 }
 
-func readTimelineCounts(path, sessionID string) (TimelineCounts, error) {
+func readTimelineCounts(path, sessionID string) (TimelineCounts, []TimelineEvent, error) {
 	var counts TimelineCounts
+	var events []TimelineEvent
 
 	err := jsonlutil.ForEachLine(path, func(line []byte) error {
 		var record transcriptDetailRecord
 		if json.Unmarshal(line, &record) == nil && record.SessionID == sessionID && record.Message != nil {
+			if !record.IsSidechain {
+				events = append(events, TimelineEvent{
+					Role:      record.Message.Role,
+					Timestamp: record.Timestamp,
+				})
+			}
+
 			switch record.Message.Role {
 			case "user":
 				counts.User++
@@ -908,10 +924,10 @@ func readTimelineCounts(path, sessionID string) (TimelineCounts, error) {
 		return nil
 	})
 	if err != nil {
-		return TimelineCounts{}, err
+		return TimelineCounts{}, nil, err
 	}
 
-	return counts, nil
+	return counts, events, nil
 }
 
 type conversationRecord struct {

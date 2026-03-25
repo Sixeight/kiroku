@@ -765,6 +765,8 @@ function renderSessionDetail(detail, messages, hasMore) {
       <div class="detail-stat"><span>Est. Cost</span><strong>${formatCost(totalCost)}</strong></div>
     </div>
 
+    ${renderMessageTimeline(detail.timeline_events || [], meta)}
+
     <div class="detail-section">
       <h3>Info</h3>
       <div class="detail-rows">
@@ -831,6 +833,66 @@ function renderModelRows(items) {
       `;
     })
     .join("");
+}
+
+// ── Message timeline ─────────────────────────────────
+
+function renderMessageTimeline(events, meta) {
+  if (!events || events.length < 2) return "";
+
+  const startedAt = new Date(meta.started_at);
+  const endedAt = new Date(meta.ended_at);
+  const duration = endedAt - startedAt;
+  if (duration <= 0) return "";
+
+  const markers = events
+    .map((ev) => {
+      const t = new Date(ev.timestamp);
+      const pct = ((t - startedAt) / duration) * 100;
+      if (pct < 0 || pct > 100) return "";
+      const isUser = ev.role === "user";
+      const cls = isUser
+        ? "tl-marker tl-marker-user"
+        : "tl-marker tl-marker-assistant";
+      const time = t.toLocaleTimeString("en-US", {
+        hour: "2-digit",
+        minute: "2-digit",
+        second: "2-digit",
+      });
+      const label = isUser ? "You" : "Claude";
+      return `<div class="${cls}" style="left:${pct}%" title="${label} ${time}"></div>`;
+    })
+    .filter(Boolean)
+    .join("");
+
+  const startLabel = startedAt.toLocaleTimeString("en-US", {
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+  const endLabel = endedAt.toLocaleTimeString("en-US", {
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+
+  return `
+    <div class="detail-section">
+      <h3>Timeline</h3>
+      <div class="tl-container">
+        <div class="tl-labels">
+          <span>${startLabel}</span>
+          <span>${endLabel}</span>
+        </div>
+        <div class="tl-track">
+          <div class="tl-track-line"></div>
+          ${markers}
+        </div>
+        <div class="tl-legend">
+          <span class="tl-legend-item"><span class="tl-dot tl-dot-user"></span>You</span>
+          <span class="tl-legend-item"><span class="tl-dot tl-dot-assistant"></span>Claude</span>
+        </div>
+      </div>
+    </div>
+  `;
 }
 
 // ── Conversation view ───────────────────────────────

@@ -248,6 +248,23 @@ func TestSQLiteStoreReturnsSessionDetailWithTimeline(t *testing.T) {
 	if got, want := detail.Meta.DurationSeconds, 3; got != want {
 		t.Fatalf("DurationSeconds = %d, want %d", got, want)
 	}
+
+	// TimelineEvents should contain all non-sidechain messages (3 messages).
+	if got, want := len(detail.TimelineEvents), 3; got != want {
+		t.Fatalf("TimelineEvents len = %d, want %d", got, want)
+	}
+	if got, want := detail.TimelineEvents[0].Role, "user"; got != want {
+		t.Fatalf("TimelineEvents[0].Role = %q, want %q", got, want)
+	}
+	if got, want := detail.TimelineEvents[0].Timestamp, "2026-03-15T10:00:00Z"; got != want {
+		t.Fatalf("TimelineEvents[0].Timestamp = %q, want %q", got, want)
+	}
+	if got, want := detail.TimelineEvents[1].Role, "assistant"; got != want {
+		t.Fatalf("TimelineEvents[1].Role = %q, want %q", got, want)
+	}
+	if got, want := detail.TimelineEvents[2].Role, "user"; got != want {
+		t.Fatalf("TimelineEvents[2].Role = %q, want %q", got, want)
+	}
 }
 
 func TestSQLiteStoreBuildsSummaryWithRecentAndTopGroups(t *testing.T) {

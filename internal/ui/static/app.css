@@ -1239,6 +1239,88 @@ h1 {
   word-break: break-word;
 }
 
+/* ── Message timeline ──────────────────────────────── */
+.tl-container {
+  padding: 0 4px;
+}
+
+.tl-labels {
+  display: flex;
+  justify-content: space-between;
+  font-size: 0.7rem;
+  color: var(--muted);
+  margin-bottom: 6px;
+  font-family: "IBM Plex Mono", monospace;
+}
+
+.tl-track {
+  position: relative;
+  height: 28px;
+}
+
+.tl-track-line {
+  position: absolute;
+  top: 50%;
+  left: 0;
+  right: 0;
+  height: 1px;
+  background: var(--panel-border);
+}
+
+.tl-marker {
+  position: absolute;
+  width: 3px;
+  height: 10px;
+  border-radius: 1px;
+  transform: translateX(-50%);
+}
+
+.tl-marker-user {
+  top: 1px;
+  background: var(--accent);
+  opacity: 0.8;
+}
+
+.tl-marker-assistant {
+  bottom: 1px;
+  background: var(--muted);
+  opacity: 0.6;
+}
+
+.tl-marker:hover {
+  opacity: 1;
+  height: 13px;
+}
+
+.tl-legend {
+  display: flex;
+  gap: 12px;
+  margin-top: 6px;
+  font-size: 0.68rem;
+  color: var(--muted);
+}
+
+.tl-legend-item {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.tl-dot {
+  display: inline-block;
+  width: 8px;
+  height: 4px;
+  border-radius: 1px;
+}
+
+.tl-dot-user {
+  background: var(--accent);
+}
+
+.tl-dot-assistant {
+  background: var(--muted);
+}
+
 /* ── Responsive ─────────────────────────────────────── */
 @media (max-width: 640px) {
   .page {
